@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 jobs:
   check:
@@ -14,8 +15,52 @@ jobs:
         with:
           node-version: 22
           cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            dashboard/package-lock.json
       - run: npm ci
+      - run: npm run dashboard:install
       - run: npm run typecheck
       - run: npm run lint
       - run: npm test
       - run: npm run build
+      - run: npm run dashboard:build
+
+  # The accuracy report on every push. Offline (rules extractor, local embeddings): free and deterministic.
+  # Fails the build if any document would be filed to the wrong client.
+  eval:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run eval -- --extractor=rules --check
+      - run: cat eval/report.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: accuracy-report
+          path: eval/report.*
+
+  # The Claude run costs money, so it only runs when started by hand (Actions → CI → Run workflow) and needs the
+  # ANTHROPIC_API_KEY repository secret.
+  eval-claude:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run eval -- --extractor=claude --check
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      - run: cat eval/report.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: accuracy-report-claude
+          path: eval/report.*
