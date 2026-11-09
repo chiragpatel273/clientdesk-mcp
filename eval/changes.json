@@ -1,0 +1,8 @@
+[
+  "First run (rules baseline, 2026-11-09): field accuracy 82.1%, wrong-client filings 0, review rate 25.0%, search hit rate 100%, citation accuracy 56.7%.",
+  "Dataset fixes, not system improvements: a printed $0.00 tax was labelled as missing; several questions had two right answers (two engagement letters for the same client and year), so clients are now dealt without repeats and a question is only asked when exactly one document matches it; hard cases (multi-page, prior year, look-alike, missing fields) are asked about first so they can't drop out of the 30 questions.",
+  "Rules extractor: reads the vendor after a 'Tax Invoice - ' heading and drops a bank's division suffix ('- Business Banking'). With the label fix above, field accuracy went from 82.1% to 84.0%.",
+  "Search: every passage now starts with a context line (document title, client, page), filed documents get a descriptive title from their extraction instead of the file name, and exact identifiers in a question (invoice and account numbers) are a third ranked list in the fusion. Together with the question-set fixes, citation accuracy went from 56.7% to 96.7%; the split between the two was not measured.",
+  "Matching (before the first run): a leading 'The' is ignored, so 'The Okoro Family Trust' matches 'Okoro Family Trust'.",
+  "Still missing targets with the rules baseline: field accuracy and review rate fail on prose layouts and simulated scans, which the regex extractor cannot read. That is the Claude extractor's job: run `npm run eval -- --extractor=claude` (about $0.10–0.30 per run) for the numbers that matter."
+]
