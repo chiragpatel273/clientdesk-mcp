@@ -4,6 +4,9 @@ A remote MCP server (a Claude custom connector) for a small professional-service
 clients and documents; the server answers through tools, enforcing who may see what and logging every call.
 All data is fictional (Northbridge Advisory, `src/demo/firm.ts`).
 
+**Start every session by reading [`docs/PLAN.md`](docs/PLAN.md)**: the goal, decisions already made, current status
+and the exact next steps. Update its Status and Next up sections when a day's work is done.
+
 ## Commands
 
 - `npm run dev` start the HTTP server on :3000 (`/mcp`, `/health`), reloads on change
