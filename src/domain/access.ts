@@ -15,6 +15,18 @@ export async function canAccessClient(db: Db, actor: Actor, clientId: string): P
   return rows.length > 0;
 }
 
+/**
+ * Every client id the actor may see, for queries that span clients (search, dashboard lists).
+ * `all` for partners. Filter with `client_id = any($n)` using this list; never with a model-supplied id.
+ */
+export async function accessibleClientIds(db: Db, actor: Actor): Promise<string[] | 'all'> {
+  if (actor.role === 'partner') return 'all';
+  const rows = await db.query<{ client_id: string }>('select client_id from client_assignments where staff_id = $1', [
+    actor.staffId,
+  ]);
+  return rows.map((r) => r.client_id);
+}
+
 /** Splits client ids into those the actor may and may not see, in one query. */
 export async function partitionByAccess(
   db: Db,

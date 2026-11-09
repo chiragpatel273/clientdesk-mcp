@@ -40,7 +40,13 @@ Quality bar: a client should be able to read the repo, watch a 3-minute video an
 - PDFs: text layer via pdf.js; scanned pages sent to Claude as PDF (no separate OCR).
 - Sign-in: hosted OAuth provider with dynamic client registration. Try WorkOS AuthKit first, Auth0 as fallback.
 - CRM: built-in mini-CRM behind an adapter interface; a HubSpot adapter only if Day 8 has time.
-- Files: Cloudflare R2. Hosting: Render or Fly.io. Dashboard: Angular 22 + `@ngnova/ui` (the owner's own library).
+- Files: Cloudflare R2. Hosting: Render or Fly.io.
+- Dashboard: React + Vite (SPA, TypeScript) with Tailwind CSS v4 and shadcn/ui; TanStack Query for data, TanStack
+  Table for the audit log and review queue, Recharts for accuracy scores. Lives in `dashboard/`, built to static files
+  and served by the existing server at `/dashboard`. It reads a small JSON API (`/api/*`) in the same process, so
+  sign-in, `resolveActor()` and the access rules stay in one place. One deploy, one origin, no CORS.
+  Why not Next.js: the dashboard is behind a login (no SEO or SSR benefit), and Next.js would add a second backend
+  that also needs DB access and access checks, plus a second deploy.
 - Budget: about $10–25 of Claude API usage in total. Keep a spending limit in the Anthropic console.
 
 ## Accuracy report (Day 6)
@@ -64,11 +70,11 @@ Publish real numbers even when they miss a target, plus what was changed to impr
 | Phase             | Days | Gate to pass before moving on                          | Status                                     |
 | ----------------- | ---- | ------------------------------------------------------ | ------------------------------------------ |
 | Foundation        | 1–2  | Claude calls `get_client` through the connector        | **Done** (pending the owner's local check) |
-| Sign-in and audit | 3    | Sign-in works inside Claude (web) via custom connector | Next                                       |
-| Documents         | 4–5  | Cited search + intake flow work end to end             |                                            |
-| Accuracy          | 6    | First accuracy report published                        |                                            |
-| Dashboard         | 7    | Audit log, review queue, scores visible                |                                            |
-| Ship              | 8    | Public launch: deployed, video, case study             |                                            |
+| Sign-in and audit | 3    | Sign-in works inside Claude (web) via custom connector | **Code done**, gate pending (WorkOS setup) |
+| Documents         | 4–5  | Cited search + intake flow work end to end             | **Done** (verified over HTTP, offline)     |
+| Accuracy          | 6    | First accuracy report published                        | **Done** (rules baseline); Claude run: owner |
+| Dashboard         | 7    | Audit log, review queue, scores visible                | **Done** (verified against the live API)   |
+| Ship              | 8    | Public launch: deployed, video, case study             | Files ready; deploy, video: owner          |
 
 If a phase runs over, cut the HubSpot adapter and the demo login first, never the accuracy report.
 
@@ -77,26 +83,52 @@ If a phase runs over, cut the HubSpot adapter and the demo login first, never th
 - **Day 1 (done):** schema and migrations, PGlite/pg `Db`, demo firm, `get_client` with access check + audit, stateless
   HTTP (`AUTH_MODE=dev`) and stdio, Claude Code setup (CLAUDE.md, skills, hooks), 11 tests, CI.
 
-## Next up: Day 3, OAuth sign-in
+- **Day 3 (code done, gate pending):** `AUTH_MODE=oauth`. `src/auth/oauth.ts` reads the provider's discovery document
+  at start-up and verifies JWT access tokens with `jose` (signature via JWKS, issuer, audience, expiry; asymmetric
+  algorithms only). `src/http.ts` serves `/.well-known/oauth-protected-resource/mcp`, protects `POST /mcp` with
+  `requireBearerAuth` (401 carries the `resource_metadata` hint), maps the email claim to a staff member in
+  `resolveActor()` (unknown → 403) and refuses unknown browser `Origin`s. Provider-agnostic: WorkOS or Auth0 is config
+  only.
+- **Days 4–5 (done):** migration 002; upload → pdf.js text (scans flagged for Claude vision) → chunks with a context
+  line → embeddings (Voyage, or `local` offline) → pgvector. Hybrid search (vector + full-text + exact identifiers,
+  RRF). Extraction: Claude Haiku 5.5 with structured outputs, Opus 5.5 when any required field is below 0.8 (server-side
+  refusal fallback on the Opus call); `rules` extractor offline. Matching scores every client with reasons; file only at
+  ≥ 0.85 and 0.15 clear of the runner-up (`FILE_THRESHOLD`, `FILE_MARGIN`); look-alikes need a second identifier.
+  All 8 tools, signed expiring document links (`/files/:id`, re-checked + audited on open), R2/local storage, demo
+  documents (3 inbox documents drive demo moments 2–4).
+- **Day 6 (done, baseline):** `eval/dataset.ts` (60 docs, 30 questions, deterministic), `npm run eval`. Rules baseline:
+  field accuracy 84.0%, wrong-client 0, review rate 25.0%, hit rate 100%, citation 96.7%. Changes and their effect in
+  `eval/changes.json`. CI runs it on every push (`--check` fails on any wrong-client filing); the Claude run is a
+  manual workflow (`workflow_dispatch`, needs the `ANTHROPIC_API_KEY` secret).
+- **Day 7 (done):** dashboard in `dashboard/` (React 19 + Vite 7 + Tailwind 4 + shadcn-style components, TanStack
+  Query/Table, Recharts) served at `/dashboard`. `/api` in `src/web/api.ts`; dev header or OAuth session cookie
+  (`DASHBOARD_CLIENT_ID/SECRET`, code + PKCE, ID token checked). Partners resolve reviews; assistants see only their own
+  audit rows, without details.
+- **Day 8 (files ready):** `Dockerfile` (built and smoke-tested), `render.yaml`, `docs/DEMO-SCRIPT.md`,
+  `docs/CASE-STUDY.md` (with `[[…]]` slots for the Claude numbers and URLs).
+- Gotchas found: pdf.js needs `standardFontDataUrl` in Node; Recharts bar animation never finishes in headless Chrome
+  (disabled); the review reason once leaked a hidden look-alike client's name to an assistant (now redacted, tested).
+- Checks: typecheck, lint, 83 tests, eval, both builds and the container all pass locally. Vitest is capped at 3
+  workers: unbounded, the parallel PGlite instances ran the 8 GB WSL machine out of memory.
 
-Goal: Claude (web) adds the connector, the user signs in, and every tool runs as that staff member. No dev header in production.
+## Next up: owner's list (in order)
 
-1. **Provider.** Create a free WorkOS (AuthKit) application with dynamic client registration enabled. Add Claude's
-   callback `https://claude.ai/api/mcp/auth_callback`. Note the issuer and JWKS URL. If DCR doesn't work in about an hour, switch to Auth0.
-2. **Config.** Add `PUBLIC_URL` (this server's https origin), `OAUTH_ISSUER`, `OAUTH_JWKS_URL` and `OAUTH_AUDIENCE`
-   to `src/config.ts` and `.env.example`. With `AUTH_MODE=oauth`, all are required.
-3. **Discovery.** Serve protected-resource metadata with the SDK's `mcpAuthMetadataRouter`
-   (`@modelcontextprotocol/sdk/server/auth/router.js`), pointing at the provider as the authorization server.
-4. **Token checks.** Protect `POST /mcp` with `requireBearerAuth`
-   (`@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js`), passing `resourceMetadataUrl` from
-   `getOAuthProtectedResourceMetadataUrl` so a 401 carries the `WWW-Authenticate` hint. Implement the verifier with
-   `jose` (`createRemoteJWKSet` + `jwtVerify`), checking issuer, audience/resource, expiry and signature.
-5. **Identity.** In `resolveActor()`, map the token's email claim to `staff.email` (case-insensitive). Unknown users get
-   403 with a clear message. Keep `dev` mode for local work and tests; it is already refused in production.
-6. **Origin check.** Reject requests whose `Origin` header is present and not allowed.
-7. **Tests.** Generate a local key pair with `jose`, serve a fake JWKS, and test: valid token → 200 as the right
-   actor; wrong audience, expired or bad signature → 401; unknown email → 403; metadata endpoint shape.
-8. **Gate.** Run with ngrok, add the connector in Claude, sign in as each demo user, and check that Tom is refused
-   Lakeside Dental while Maya isn't. Record which provider worked and any gotchas in this file.
+1. **`.env.example`.** Claude Code's permission settings block it; add the new variables listed in `src/config.ts`
+   (`PUBLIC_URL`, `OAUTH_*`, `DASHBOARD_CLIENT_*`, `SESSION_SECRET`, `LINK_SECRET`, `EXTRACTOR`, `ANTHROPIC_API_KEY`,
+   `EMBEDDINGS`, `VOYAGE_API_KEY`, `STORAGE`, `FILES_DIR`, `R2_*`, `FILE_THRESHOLD`, `FILE_MARGIN`).
+2. **Claude eval.** Set a spend limit in the Anthropic console, put `ANTHROPIC_API_KEY` in `.env`, run
+   `npm run eval:claude` (about $0.10–0.30). With `VOYAGE_API_KEY` set too, search uses Voyage. Commit
+   `eval/report.*`, add a line to `eval/changes.json` for anything you change, and fill the case study table.
+3. **WorkOS (Day 3 gate).** AuthKit app, dynamic client registration on, redirect URI
+   `https://claude.ai/api/mcp/auth_callback`, JWT template adding `email` to access tokens, email verification on,
+   users Maya/Tom/Ana with passwords (`@northbridge.example` can't receive mail). For the dashboard, a second regular
+   OAuth client with redirect `PUBLIC_URL/auth/callback` (`DASHBOARD_CLIENT_ID/SECRET`); if AuthKit can't issue one,
+   skip it: the plan allows cutting the demo login.
+4. **Local gate.** `ngrok http 3000`, run with `AUTH_MODE=oauth PUBLIC_URL=https://<ngrok> OAUTH_ISSUER=...`, add the
+   connector in Claude, sign in as Tom then Maya. If requests 401 after sign-in, decode the token's `aud` and set
+   `OAUTH_AUDIENCE` to it (never drop the check). Record the provider and gotchas here.
+5. **Deploy.** Neon project (copy the connection string), R2 bucket + API token, Render → New → Blueprint →
+   this repo; fill the `sync: false` values. Point the WorkOS redirect/allowed origins at the Render URL.
+6. **Video and launch.** Follow `docs/DEMO-SCRIPT.md`, fill `docs/CASE-STUDY.md`, publish.
 
-Run the `security-review` skill before committing.
+Run the `security-review` skill before each commit.

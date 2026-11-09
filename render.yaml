@@ -1,0 +1,48 @@
+# Render blueprint: New → Blueprint → pick this repo. Secrets marked `sync: false` are asked for on first deploy.
+# Database: create a free Neon project and paste its connection string as DATABASE_URL (pgvector is enabled by the
+# first migration). Files: a Cloudflare R2 bucket (Render's disk is wiped on every deploy).
+services:
+  - type: web
+    name: clientdesk-mcp
+    runtime: docker
+    plan: free # sleeps when idle; use starter (~$7/month) to keep it awake for demos
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: AUTH_MODE
+        value: oauth
+      - key: PUBLIC_URL
+        sync: false # https://clientdesk-mcp.onrender.com (or your custom domain)
+      - key: OAUTH_ISSUER
+        sync: false # https://<subdomain>.authkit.app
+      - key: OAUTH_AUDIENCE
+        sync: false # optional; defaults to PUBLIC_URL + /mcp
+      - key: OAUTH_EMAIL_CLAIM
+        value: email
+      - key: DASHBOARD_CLIENT_ID
+        sync: false
+      - key: DASHBOARD_CLIENT_SECRET
+        sync: false
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: LINK_SECRET
+        generateValue: true
+      - key: DATABASE_URL
+        sync: false # Neon connection string, postgres://...?sslmode=require
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: VOYAGE_API_KEY
+        sync: false
+      - key: STORAGE
+        value: r2
+      - key: R2_ACCOUNT_ID
+        sync: false
+      - key: R2_ACCESS_KEY_ID
+        sync: false
+      - key: R2_SECRET_ACCESS_KEY
+        sync: false
+      - key: R2_BUCKET
+        value: clientdesk-documents
+      - key: SEED_DEMO
+        value: '1'

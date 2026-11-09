@@ -3,6 +3,7 @@ import { openDatabase } from './bootstrap.js';
 import { loadConfig } from './config.js';
 import { findActorByEmail } from './domain/staff.js';
 import { createMcpServer } from './mcp/server.js';
+import { createServices } from './services.js';
 
 /**
  * Local entry point for Claude Code: `claude mcp add clientdesk -- npx tsx src/stdio.ts`.
@@ -11,7 +12,8 @@ import { createMcpServer } from './mcp/server.js';
 const log = (msg: string) => console.error(`[clientdesk] ${msg}`);
 
 const config = loadConfig();
-const db = await openDatabase(config, log);
+const services = createServices(config);
+const db = await openDatabase(config, log, services);
 const email = process.env.CLIENTDESK_USER ?? config.devUser;
 const actor = await findActorByEmail(db, email);
 if (!actor) {
@@ -19,6 +21,8 @@ if (!actor) {
   process.exit(1);
 }
 
-const server = createMcpServer({ db, actor });
+const server = createMcpServer({ db, actor, services });
 await server.connect(new StdioServerTransport());
-log(`Ready as ${actor.name} (${actor.role}).`);
+log(
+  `Ready as ${actor.name} (${actor.role}); extractor ${services.extractor.name}, embeddings ${services.embedder.model}.`,
+);

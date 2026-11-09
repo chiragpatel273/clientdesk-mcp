@@ -6,7 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { loadConfig } from '../src/config.js';
 import type { Db } from '../src/db/index.js';
 import { createHttpApp } from '../src/http.js';
-import { demoDb, TOM } from './helpers.js';
+import { demoDb, testServices, TOM } from './helpers.js';
 
 describe('HTTP transport (Streamable HTTP, stateless)', () => {
   let db: Db;
@@ -16,7 +16,7 @@ describe('HTTP transport (Streamable HTTP, stateless)', () => {
   beforeAll(async () => {
     db = await demoDb();
     const config = loadConfig({ NODE_ENV: 'test', AUTH_MODE: 'dev' });
-    const app = createHttpApp({ db, config });
+    const app = createHttpApp({ db, config, services: testServices() });
     server = await new Promise<Server>((resolve) => {
       const s = app.listen(0, '127.0.0.1', () => resolve(s));
     });

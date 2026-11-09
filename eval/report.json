@@ -1,0 +1,1087 @@
+{
+  "generatedAt": "2026-11-09T12:48:24.718Z",
+  "extractor": "rules-v1 (offline baseline)",
+  "embedder": "local-hash-v1",
+  "thresholds": {
+    "threshold": 0.85,
+    "margin": 0.15
+  },
+  "dataset": {
+    "documents": 60,
+    "questions": 30
+  },
+  "metrics": [
+    {
+      "key": "field_accuracy",
+      "label": "Field accuracy",
+      "value": 0.8404761904761905,
+      "target": 0.95,
+      "op": ">=",
+      "unit": "percent",
+      "pass": false
+    },
+    {
+      "key": "wrong_client_filings",
+      "label": "Wrong-client filings",
+      "value": 0,
+      "target": 0,
+      "op": "<=",
+      "unit": "count",
+      "pass": true
+    },
+    {
+      "key": "review_rate",
+      "label": "Review-queue rate",
+      "value": 0.25,
+      "target": 0.1,
+      "op": "<=",
+      "unit": "percent",
+      "pass": false
+    },
+    {
+      "key": "search_hit_rate",
+      "label": "Search hit rate (top 5)",
+      "value": 1,
+      "target": 0.9,
+      "op": ">=",
+      "unit": "percent",
+      "pass": true
+    },
+    {
+      "key": "citation_accuracy",
+      "label": "Citation accuracy",
+      "value": 0.9666666666666667,
+      "target": 0.95,
+      "op": ">=",
+      "unit": "percent",
+      "pass": true
+    }
+  ],
+  "byDocType": [
+    {
+      "docType": "invoice",
+      "documents": 15,
+      "fieldAccuracy": 0.8666666666666667,
+      "reviewRate": 0.3333333333333333
+    },
+    {
+      "docType": "bank_statement",
+      "documents": 15,
+      "fieldAccuracy": 0.8833333333333333,
+      "reviewRate": 0.26666666666666666
+    },
+    {
+      "docType": "engagement_letter",
+      "documents": 15,
+      "fieldAccuracy": 0.7777777777777778,
+      "reviewRate": 0.2
+    },
+    {
+      "docType": "tax_form",
+      "documents": 15,
+      "fieldAccuracy": 0.8111111111111111,
+      "reviewRate": 0.2
+    }
+  ],
+  "decisions": {
+    "filedCorrectly": 45,
+    "filedWrongly": 0,
+    "reviewedAsExpected": 2,
+    "reviewedUnnecessarily": 13
+  },
+  "cases": [
+    {
+      "id": "inv_01",
+      "docType": "invoice",
+      "hardCase": null,
+      "expected": "file to cl_marlow",
+      "outcome": "filed to cl_marlow",
+      "correct": true,
+      "fieldErrors": [],
+      "model": "rules-v1"
+    },
+    {
+      "id": "inv_02",
+      "docType": "invoice",
+      "hardCase": null,
+      "expected": "file to cl_acme",
+      "outcome": "filed to cl_acme",
+      "correct": true,
+      "fieldErrors": [],
+      "model": "rules-v1"
+    },
+    {
+      "id": "inv_03",
+      "docType": "invoice",
+      "hardCase": "not a client",
+      "expected": "review",
+      "outcome": "sent to review",
+      "correct": true,
+      "fieldErrors": [],
+      "model": "rules-v1"
+    },
+    {
+      "id": "inv_04",
+      "docType": "invoice",
+      "hardCase": null,
+      "expected": "file to cl_acme_labs",
+      "outcome": "filed to cl_acme_labs",
+      "correct": true,
+      "fieldErrors": [],
+      "model": "rules-v1"
+    },
+    {
+      "id": "inv_05",
+      "docType": "invoice",
+      "hardCase": null,
+      "expected": "file to cl_lakeside",
+      "outcome": "filed to cl_lakeside",
+      "correct": true,
+      "fieldErrors": [],
+      "model": "rules-v1"
+    },
+    {
+      "id": "inv_06",
+      "docType": "invoice",
+      "hardCase": "name variant",
+      "expected": "file to cl_greenfield",
+      "outcome": "filed to cl_greenfield",
+      "correct": true,
+      "fieldErrors": [],
+      "model": "rules-v1"
+    },
+    {
+      "id": "inv_07",
+      "docType": "invoice",
+      "hardCase": "name variant",
+      "expected": "file to cl_harbor_pine",
+      "outcome": "filed to cl_harbor_pine",
+      "correct": true,
+      "fieldErrors": [],
+      "model": "rules-v1"
+    },
+    {
+      "id": "inv_08",
+      "docType": "invoice",
+      "hardCase": "prose layout",
+      "expected": "file to cl_harbor_pine",
+      "outcome": "sent to review",
+      "correct": false,
+      "fieldErrors": [
+        "invoice_number: expected AT-40776, got ∅",
+        "invoice_date: expected 2026-06-18, got ∅",
+        "due_date: expected 2026-07-21, got ∅",
+        "billed_to: expected Harbor & Pine Partners, got ∅",
+        "total_amount: expected 589.33, got ∅",
+        "tax_amount: expected 43.65, got ∅"
+      ],
+      "model": "rules-v1"
+    },
+    {
+      "id": "inv_09",
+      "docType": "invoice",
+      "hardCase": "prose layout",
+      "expected": "file to cl_acme",
+      "outcome": "sent to review",
+      "correct": false,
+      "fieldErrors": [
+        "invoice_number: expected NO-79593, got ∅",
+        "invoice_date: expected 2026-05-18, got ∅",
+        "due_date: expected 2026-06-16, got ∅",
+        "billed_to: expected Acme Ltd, got ∅",
+        "total_amount: expected 2084.53, got ∅",
+        "tax_amount: expected 154.41, got ∅"
+      ],
+      "model": "rules-v1"
+    },
+    {
+      "id": "inv_10",
+      "docType": "invoice",
+      "hardCase": "scan (OCR noise)",
+      "expected": "file to cl_acme_labs",
+      "outcome": "sent to review",
+      "correct": false,
+      "fieldErrors": [
+        "billed_to: expected Acme Labs Ltd, got Acmc Labs Ltd"
+      ],
+      "model": "rules-v1"
+    },
+    {
+      "id": "inv_11",
+      "docType": "invoice",
+      "hardCase": "scan (OCR noise)",
+      "expected": "file to cl_brightline",
+      "outcome": "sent to review",
+      "correct": false,
+      "fieldErrors": [
+        "due_date: expected 2026-05-20, got ∅",
+        "billed_to: expected Brightline Logistics Inc, got Brlghtline Logistics Inc",
+        "total_amount: expected 631.89, got ∅"
+      ],
+      "model": "rules-v1"
+    },
+    {
+      "id": "inv_12",
+      "docType": "invoice",
+      "hardCase": "look-alike client",
+      "expected": "file to cl_acme",
+      "outcome": "filed to cl_acme",
+      "correct": true,
+      "fieldErrors": [],
+      "model": "rules-v1"
+    },
+    {
+      "id": "inv_13",
+      "docType": "invoice",
+      "hardCase": "missing fields",
+      "expected": "file to cl_lakeside",
+      "outcome": "filed to cl_lakeside",
+      "correct": true,
+      "fieldErrors": [],
+      "model": "rules-v1"
+    },
+    {
+      "id": "inv_14",
+      "docType": "invoice",
+      "hardCase": "prior year",
+      "expected": "file to cl_marlow",
+      "outcome": "filed to cl_marlow",
+      "correct": true,
+      "fieldErrors": [],
+      "model": "rules-v1"
+    },
+    {
+      "id": "inv_15",
+      "docType": "invoice",
+      "hardCase": "multi-page",
+      "expected": "file to cl_greenfield",
+      "outcome": "filed to cl_greenfield",
+      "correct": true,
+      "fieldErrors": [],
+      "model": "rules-v1"
+    },
+    {
+      "id": "stm_01",
+      "docType": "bank_statement",
+      "hardCase": null,
+      "expected": "file to cl_greenfield",
+      "outcome": "filed to cl_greenfield",
+      "correct": true,
+      "fieldErrors": [],
+      "model": "rules-v1"
+    },
+    {
+      "id": "stm_02",
+      "docType": "bank_statement",
+      "hardCase": null,
+      "expected": "file to cl_marlow",
+      "outcome": "filed to cl_marlow",
+      "correct": true,
+      "fieldErrors": [],
+      "model": "rules-v1"
+    },
+    {
+      "id": "stm_03",
+      "docType": "bank_statement",
+      "hardCase": null,
+      "expected": "file to cl_harbor_pine",
+      "outcome": "filed to cl_harbor_pine",
+      "correct": true,
+      "fieldErrors": [],
+      "model": "rules-v1"
+    },
+    {
+      "id": "stm_04",
+      "docType": "bank_statement",
+      "hardCase": null,
+      "expected": "file to cl_brightline",
+      "outcome": "filed to cl_brightline",
+      "correct": true,
+      "fieldErrors": [],
+      "model": "rules-v1"
+    },
+    {
+      "id": "stm_05",
+      "docType": "bank_statement",
+      "hardCase": null,
+      "expected": "file to cl_kim",
+      "outcome": "filed to cl_kim",
+      "correct": true,
+      "fieldErrors": [],
+      "model": "rules-v1"
+    },
+    {
+      "id": "stm_06",
+      "docType": "bank_statement",
+      "hardCase": "name variant",
+      "expected": "file to cl_lakeside",
+      "outcome": "filed to cl_lakeside",
+      "correct": true,
+      "fieldErrors": [],
+      "model": "rules-v1"
+    },
+    {
+      "id": "stm_07",
+      "docType": "bank_statement",
+      "hardCase": "name variant",
+      "expected": "file to cl_okoro_trust",
+      "outcome": "filed to cl_okoro_trust",
+      "correct": true,
+      "fieldErrors": [],
+      "model": "rules-v1"
+    },
+    {
+      "id": "stm_08",
+      "docType": "bank_statement",
+      "hardCase": "prose layout",
+      "expected": "file to cl_acme_labs",
+      "outcome": "sent to review",
+      "correct": false,
+      "fieldErrors": [
+        "account_holder: expected Acme Labs Ltd, got ∅",
+        "account_last4: expected 8953, got ∅",
+        "period_start: expected 2026-05-01, got ∅",
+        "period_end: expected 2026-05-31, got ∅",
+        "opening_balance: expected 69948.96, got ∅",
+        "closing_balance: expected 68860.53, got ∅"
+      ],
+      "model": "rules-v1"
+    },
+    {
+      "id": "stm_09",
+      "docType": "bank_statement",
+      "hardCase": "prose layout",
+      "expected": "file to cl_brooks",
+      "outcome": "sent to review",
+      "correct": false,
+      "fieldErrors": [
+        "account_holder: expected Samuel Brooks, got ∅",
+        "account_last4: expected 6836, got ∅",
+        "period_start: expected 2026-08-01, got ∅",
+        "period_end: expected 2026-08-31, got ∅",
+        "opening_balance: expected 24262.96, got ∅",
+        "closing_balance: expected 28937.80, got ∅"
+      ],
+      "model": "rules-v1"
+    },
+    {
+      "id": "stm_10",
+      "docType": "bank_statement",
+      "hardCase": "scan (OCR noise)",
+      "expected": "file to cl_acme",
+      "outcome": "filed to cl_acme",
+      "correct": false,
+      "fieldErrors": [
+        "closing_balance: expected 46437.99, got ∅"
+      ],
+      "model": "rules-v1"
+    },
+    {
+      "id": "stm_11",
+      "docType": "bank_statement",
+      "hardCase": "scan (OCR noise)",
+      "expected": "file to cl_marlow",
+      "outcome": "sent to review",
+      "correct": false,
+      "fieldErrors": [
+        "account_holder: expected Marlow Studio LLC, got ∅"
+      ],
+      "model": "rules-v1"
+    },
+    {
+      "id": "stm_12",
+      "docType": "bank_statement",
+      "hardCase": "look-alike, no second id",
+      "expected": "review",
+      "outcome": "sent to review",
+      "correct": true,
+      "fieldErrors": [],
+      "model": "rules-v1"
+    },
+    {
+      "id": "stm_13",
+      "docType": "bank_statement",
+      "hardCase": "missing fields",
+      "expected": "file to cl_brooks",
+      "outcome": "filed to cl_brooks",
+      "correct": true,
+      "fieldErrors": [],
+      "model": "rules-v1"
+    },
+    {
+      "id": "stm_14",
+      "docType": "bank_statement",
+      "hardCase": "prior year",
+      "expected": "file to cl_acme",
+      "outcome": "filed to cl_acme",
+      "correct": true,
+      "fieldErrors": [],
+      "model": "rules-v1"
+    },
+    {
+      "id": "stm_15",
+      "docType": "bank_statement",
+      "hardCase": "multi-page",
+      "expected": "file to cl_lakeside",
+      "outcome": "filed to cl_lakeside",
+      "correct": true,
+      "fieldErrors": [],
+      "model": "rules-v1"
+    },
+    {
+      "id": "eng_01",
+      "docType": "engagement_letter",
+      "hardCase": null,
+      "expected": "file to cl_brightline",
+      "outcome": "filed to cl_brightline",
+      "correct": true,
+      "fieldErrors": [],
+      "model": "rules-v1"
+    },
+    {
+      "id": "eng_02",
+      "docType": "engagement_letter",
+      "hardCase": null,
+      "expected": "file to cl_okoro_trust",
+      "outcome": "filed to cl_okoro_trust",
+      "correct": true,
+      "fieldErrors": [],
+      "model": "rules-v1"
+    },
+    {
+      "id": "eng_03",
+      "docType": "engagement_letter",
+      "hardCase": null,
+      "expected": "file to cl_harbor_pine",
+      "outcome": "filed to cl_harbor_pine",
+      "correct": true,
+      "fieldErrors": [],
+      "model": "rules-v1"
+    },
+    {
+      "id": "eng_04",
+      "docType": "engagement_letter",
+      "hardCase": null,
+      "expected": "file to cl_kim",
+      "outcome": "filed to cl_kim",
+      "correct": true,
+      "fieldErrors": [],
+      "model": "rules-v1"
+    },
+    {
+      "id": "eng_05",
+      "docType": "engagement_letter",
+      "hardCase": null,
+      "expected": "file to cl_marlow",
+      "outcome": "filed to cl_marlow",
+      "correct": true,
+      "fieldErrors": [],
+      "model": "rules-v1"
+    },
+    {
+      "id": "eng_06",
+      "docType": "engagement_letter",
+      "hardCase": "name variant",
+      "expected": "file to cl_brooks",
+      "outcome": "filed to cl_brooks",
+      "correct": true,
+      "fieldErrors": [],
+      "model": "rules-v1"
+    },
+    {
+      "id": "eng_07",
+      "docType": "engagement_letter",
+      "hardCase": "name variant",
+      "expected": "file to cl_acme_labs",
+      "outcome": "filed to cl_acme_labs",
+      "correct": true,
+      "fieldErrors": [],
+      "model": "rules-v1"
+    },
+    {
+      "id": "eng_08",
+      "docType": "engagement_letter",
+      "hardCase": "prose layout",
+      "expected": "file to cl_greenfield",
+      "outcome": "sent to review",
+      "correct": false,
+      "fieldErrors": [
+        "client_name: expected Greenfield Bakery LLC, got ∅",
+        "tax_year: expected 2026, got ∅",
+        "services: expected Annual accounts and corporate tax return, got ∅",
+        "annual_fee: expected 12441.00, got ∅",
+        "signed_date: expected 2026-02-20, got ∅",
+        "signed_by: expected Owen Hart, got ∅"
+      ],
+      "model": "rules-v1"
+    },
+    {
+      "id": "eng_09",
+      "docType": "engagement_letter",
+      "hardCase": "prose layout",
+      "expected": "file to cl_acme",
+      "outcome": "sent to review",
+      "correct": false,
+      "fieldErrors": [
+        "client_name: expected Acme Ltd, got ∅",
+        "tax_year: expected 2026, got ∅",
+        "services: expected Annual accounts and corporate tax return, got ∅",
+        "annual_fee: expected 7222.00, got ∅",
+        "signed_date: expected 2026-02-06, got ∅",
+        "signed_by: expected Owen Hart, got ∅"
+      ],
+      "model": "rules-v1"
+    },
+    {
+      "id": "eng_10",
+      "docType": "engagement_letter",
+      "hardCase": "scan (OCR noise)",
+      "expected": "file to cl_lakeside",
+      "outcome": "filed to cl_lakeside",
+      "correct": false,
+      "fieldErrors": [
+        "tax_year: expected 2026, got ∅",
+        "annual_fee: expected 5323.00, got ∅",
+        "signed_by: expected Grace Harbor, got ∅"
+      ],
+      "model": "rules-v1"
+    },
+    {
+      "id": "eng_11",
+      "docType": "engagement_letter",
+      "hardCase": "scan (OCR noise)",
+      "expected": "file to cl_lakeside",
+      "outcome": "sent to review",
+      "correct": false,
+      "fieldErrors": [
+        "client_name: expected Lakeside Dental Group, got ∅",
+        "services: expected Bookkeeping review, payroll filings and year-end accounts, got 8ookkecping review, payroll filings and year-end accounts",
+        "annual_fee: expected 6263.00, got ∅",
+        "signed_date: expected 2026-01-23, got ∅",
+        "signed_by: expected Mia Torres, got Mia Torrcs"
+      ],
+      "model": "rules-v1"
+    },
+    {
+      "id": "eng_12",
+      "docType": "engagement_letter",
+      "hardCase": "look-alike client",
+      "expected": "file to cl_acme_labs",
+      "outcome": "filed to cl_acme_labs",
+      "correct": true,
+      "fieldErrors": [],
+      "model": "rules-v1"
+    },
+    {
+      "id": "eng_13",
+      "docType": "engagement_letter",
+      "hardCase": "missing fields",
+      "expected": "file to cl_kim",
+      "outcome": "filed to cl_kim",
+      "correct": true,
+      "fieldErrors": [],
+      "model": "rules-v1"
+    },
+    {
+      "id": "eng_14",
+      "docType": "engagement_letter",
+      "hardCase": "prior year",
+      "expected": "file to cl_okoro_trust",
+      "outcome": "filed to cl_okoro_trust",
+      "correct": true,
+      "fieldErrors": [],
+      "model": "rules-v1"
+    },
+    {
+      "id": "eng_15",
+      "docType": "engagement_letter",
+      "hardCase": "multi-page",
+      "expected": "file to cl_greenfield",
+      "outcome": "filed to cl_greenfield",
+      "correct": true,
+      "fieldErrors": [],
+      "model": "rules-v1"
+    },
+    {
+      "id": "tax_01",
+      "docType": "tax_form",
+      "hardCase": null,
+      "expected": "file to cl_okoro_trust",
+      "outcome": "filed to cl_okoro_trust",
+      "correct": true,
+      "fieldErrors": [],
+      "model": "rules-v1"
+    },
+    {
+      "id": "tax_02",
+      "docType": "tax_form",
+      "hardCase": null,
+      "expected": "file to cl_brooks",
+      "outcome": "filed to cl_brooks",
+      "correct": true,
+      "fieldErrors": [],
+      "model": "rules-v1"
+    },
+    {
+      "id": "tax_03",
+      "docType": "tax_form",
+      "hardCase": null,
+      "expected": "file to cl_kim",
+      "outcome": "filed to cl_kim",
+      "correct": true,
+      "fieldErrors": [],
+      "model": "rules-v1"
+    },
+    {
+      "id": "tax_04",
+      "docType": "tax_form",
+      "hardCase": null,
+      "expected": "file to cl_okoro_trust",
+      "outcome": "filed to cl_okoro_trust",
+      "correct": true,
+      "fieldErrors": [],
+      "model": "rules-v1"
+    },
+    {
+      "id": "tax_05",
+      "docType": "tax_form",
+      "hardCase": null,
+      "expected": "file to cl_brooks",
+      "outcome": "filed to cl_brooks",
+      "correct": true,
+      "fieldErrors": [],
+      "model": "rules-v1"
+    },
+    {
+      "id": "tax_06",
+      "docType": "tax_form",
+      "hardCase": "name variant",
+      "expected": "file to cl_kim",
+      "outcome": "filed to cl_kim",
+      "correct": true,
+      "fieldErrors": [],
+      "model": "rules-v1"
+    },
+    {
+      "id": "tax_07",
+      "docType": "tax_form",
+      "hardCase": "name variant",
+      "expected": "file to cl_brooks",
+      "outcome": "filed to cl_brooks",
+      "correct": true,
+      "fieldErrors": [],
+      "model": "rules-v1"
+    },
+    {
+      "id": "tax_08",
+      "docType": "tax_form",
+      "hardCase": "prose layout",
+      "expected": "file to cl_kim",
+      "outcome": "sent to review",
+      "correct": false,
+      "fieldErrors": [
+        "tax_year: expected 2025, got ∅",
+        "recipient_name: expected Hana Kim, got ∅",
+        "recipient_tin_last4: expected 1132, got ∅",
+        "payer_name: expected Summit Savings Bank, got ∅",
+        "amount: expected 10981.06, got ∅"
+      ],
+      "model": "rules-v1"
+    },
+    {
+      "id": "tax_09",
+      "docType": "tax_form",
+      "hardCase": "prose layout",
+      "expected": "file to cl_okoro_trust",
+      "outcome": "sent to review",
+      "correct": false,
+      "fieldErrors": [
+        "tax_year: expected 2025, got ∅",
+        "recipient_name: expected Okoro Family Trust, got ∅",
+        "recipient_tin_last4: expected 6684, got ∅",
+        "payer_name: expected Riverton Credit Union, got ∅",
+        "amount: expected 6157.54, got ∅"
+      ],
+      "model": "rules-v1"
+    },
+    {
+      "id": "tax_10",
+      "docType": "tax_form",
+      "hardCase": "scan (OCR noise)",
+      "expected": "file to cl_okoro_trust",
+      "outcome": "sent to review",
+      "correct": false,
+      "fieldErrors": [
+        "recipient_name: expected Okoro Family Trust, got Okoro Famlly Trust",
+        "recipient_tin_last4: expected 6684, got ∅",
+        "payer_name: expected Keystone Home Lending, got ∅",
+        "amount: expected 4044.92, got ∅"
+      ],
+      "model": "rules-v1"
+    },
+    {
+      "id": "tax_11",
+      "docType": "tax_form",
+      "hardCase": "scan (OCR noise)",
+      "expected": "file to cl_brooks",
+      "outcome": "filed to cl_brooks",
+      "correct": false,
+      "fieldErrors": [
+        "tax_year: expected 2025, got ∅",
+        "recipient_name: expected Samuel Brooks, got Samucl Brooks",
+        "payer_name: expected Coastal Health Partners, got Coastal Hcalth Partners"
+      ],
+      "model": "rules-v1"
+    },
+    {
+      "id": "tax_12",
+      "docType": "tax_form",
+      "hardCase": "look-alike client",
+      "expected": "file to cl_petrovic",
+      "outcome": "filed to cl_petrovic",
+      "correct": true,
+      "fieldErrors": [],
+      "model": "rules-v1"
+    },
+    {
+      "id": "tax_13",
+      "docType": "tax_form",
+      "hardCase": "missing fields",
+      "expected": "file to cl_kim",
+      "outcome": "filed to cl_kim",
+      "correct": true,
+      "fieldErrors": [],
+      "model": "rules-v1"
+    },
+    {
+      "id": "tax_14",
+      "docType": "tax_form",
+      "hardCase": "prior year",
+      "expected": "file to cl_kim",
+      "outcome": "filed to cl_kim",
+      "correct": true,
+      "fieldErrors": [],
+      "model": "rules-v1"
+    },
+    {
+      "id": "tax_15",
+      "docType": "tax_form",
+      "hardCase": null,
+      "expected": "file to cl_brooks",
+      "outcome": "filed to cl_brooks",
+      "correct": true,
+      "fieldErrors": [],
+      "model": "rules-v1"
+    }
+  ],
+  "questions": [
+    {
+      "id": "q_01",
+      "question": "What is the total due on invoice SU-57505 from Summit Cleaning Services?",
+      "expected": "inv_06 p.1",
+      "paraphrased": false,
+      "hit": true,
+      "rank": 1,
+      "citedCorrectly": true,
+      "top": "inv_06 p.1"
+    },
+    {
+      "id": "q_02",
+      "question": "What is the closing balance on the Summit Savings Bank statement for account 2021?",
+      "expected": "stm_06 p.1",
+      "paraphrased": false,
+      "hit": true,
+      "rank": 1,
+      "citedCorrectly": true,
+      "top": "stm_06 p.1"
+    },
+    {
+      "id": "q_03",
+      "question": "How much will SAMUEL BROOKS pay Northbridge for the 2026 work?",
+      "expected": "eng_06 p.1",
+      "paraphrased": true,
+      "hit": true,
+      "rank": 1,
+      "citedCorrectly": true,
+      "top": "eng_06 p.1"
+    },
+    {
+      "id": "q_04",
+      "question": "What amount is on the 2025 Form W-2 from Riverton Credit Union for HANA KIM?",
+      "expected": "tax_06 p.1",
+      "paraphrased": false,
+      "hit": true,
+      "rank": 1,
+      "citedCorrectly": true,
+      "top": "tax_06 p.1"
+    },
+    {
+      "id": "q_05",
+      "question": "What is the total due on invoice PI-92893 from Pixel & Print Studio?",
+      "expected": "inv_07 p.1",
+      "paraphrased": false,
+      "hit": true,
+      "rank": 1,
+      "citedCorrectly": true,
+      "top": "inv_07 p.1"
+    },
+    {
+      "id": "q_06",
+      "question": "What did The Okoro Family Trust have left in the Meridian Trust Bank account ending 5212 at the end of the period?",
+      "expected": "stm_07 p.1",
+      "paraphrased": true,
+      "hit": true,
+      "rank": 1,
+      "citedCorrectly": true,
+      "top": "stm_07 p.1"
+    },
+    {
+      "id": "q_07",
+      "question": "What fee did Okoro Family Trust agree to in the 2025 engagement letter?",
+      "expected": "eng_14 p.1",
+      "paraphrased": false,
+      "hit": true,
+      "rank": 1,
+      "citedCorrectly": true,
+      "top": "eng_14 p.1"
+    },
+    {
+      "id": "q_08",
+      "question": "What amount is on the 2025 Form W-2 from Atlas Index Funds for SAMUEL BROOKS?",
+      "expected": "tax_07 p.1",
+      "paraphrased": false,
+      "hit": true,
+      "rank": 1,
+      "citedCorrectly": true,
+      "top": "tax_07 p.1"
+    },
+    {
+      "id": "q_09",
+      "question": "How much does Acme Ltd owe Harbor Freight Couriers in total?",
+      "expected": "inv_12 p.1",
+      "paraphrased": true,
+      "hit": true,
+      "rank": 1,
+      "citedCorrectly": true,
+      "top": "inv_12 p.1"
+    },
+    {
+      "id": "q_10",
+      "question": "What is the closing balance on the First Harbor Bank statement for account 4412?",
+      "expected": "stm_13 p.1",
+      "paraphrased": false,
+      "hit": true,
+      "rank": 1,
+      "citedCorrectly": true,
+      "top": "stm_13 p.1"
+    },
+    {
+      "id": "q_11",
+      "question": "What fee did Brightline Logistics Inc agree to in the 2026 engagement letter?",
+      "expected": "eng_01 p.1",
+      "paraphrased": false,
+      "hit": true,
+      "rank": 1,
+      "citedCorrectly": true,
+      "top": "eng_01 p.1"
+    },
+    {
+      "id": "q_12",
+      "question": "What did Riverton Credit Union report for Elena Petrovic for 2025?",
+      "expected": "tax_12 p.1",
+      "paraphrased": true,
+      "hit": true,
+      "rank": 1,
+      "citedCorrectly": true,
+      "top": "tax_12 p.1"
+    },
+    {
+      "id": "q_13",
+      "question": "What is the total due on invoice JU-55753 from Juniper Legal LLP?",
+      "expected": "inv_13 p.1",
+      "paraphrased": false,
+      "hit": true,
+      "rank": 1,
+      "citedCorrectly": true,
+      "top": "inv_13 p.1"
+    },
+    {
+      "id": "q_14",
+      "question": "What is the closing balance on the Summit Savings Bank statement for account 2037?",
+      "expected": "stm_14 p.1",
+      "paraphrased": false,
+      "hit": true,
+      "rank": 1,
+      "citedCorrectly": true,
+      "top": "stm_14 p.1"
+    },
+    {
+      "id": "q_15",
+      "question": "How much will Okoro Family Trust pay Northbridge for the 2026 work?",
+      "expected": "eng_02 p.1",
+      "paraphrased": true,
+      "hit": true,
+      "rank": 1,
+      "citedCorrectly": true,
+      "top": "eng_02 p.1"
+    },
+    {
+      "id": "q_16",
+      "question": "What amount is on the 2025 Form 1099-INT from Keystone Home Lending for Hana Kim?",
+      "expected": "tax_13 p.1",
+      "paraphrased": false,
+      "hit": true,
+      "rank": 1,
+      "citedCorrectly": true,
+      "top": "tax_13 p.1"
+    },
+    {
+      "id": "q_17",
+      "question": "What is the total due on invoice SU-67459 from Summit Cleaning Services?",
+      "expected": "inv_14 p.1",
+      "paraphrased": false,
+      "hit": true,
+      "rank": 1,
+      "citedCorrectly": true,
+      "top": "inv_14 p.1"
+    },
+    {
+      "id": "q_18",
+      "question": "What did Lakeside Dental Group have left in the Meridian Trust Bank account ending 9950 at the end of the period?",
+      "expected": "stm_15 p.2",
+      "paraphrased": true,
+      "hit": true,
+      "rank": 1,
+      "citedCorrectly": false,
+      "top": "stm_15 p.1"
+    },
+    {
+      "id": "q_19",
+      "question": "What fee did Harbor & Pine Partners agree to in the 2026 engagement letter?",
+      "expected": "eng_03 p.1",
+      "paraphrased": false,
+      "hit": true,
+      "rank": 1,
+      "citedCorrectly": true,
+      "top": "eng_03 p.1"
+    },
+    {
+      "id": "q_20",
+      "question": "What amount is on the 2024 Form 1099-INT from Coastal Health Partners for Hana Kim?",
+      "expected": "tax_14 p.1",
+      "paraphrased": false,
+      "hit": true,
+      "rank": 1,
+      "citedCorrectly": true,
+      "top": "tax_14 p.1"
+    },
+    {
+      "id": "q_21",
+      "question": "How much does Greenfield Bakery LLC owe Pixel & Print Studio in total?",
+      "expected": "inv_15 p.2",
+      "paraphrased": true,
+      "hit": true,
+      "rank": 1,
+      "citedCorrectly": true,
+      "top": "inv_15 p.2"
+    },
+    {
+      "id": "q_22",
+      "question": "What is the closing balance on the First Harbor Bank statement for account 7139?",
+      "expected": "stm_01 p.1",
+      "paraphrased": false,
+      "hit": true,
+      "rank": 1,
+      "citedCorrectly": true,
+      "top": "stm_01 p.1"
+    },
+    {
+      "id": "q_23",
+      "question": "What fee did Marlow Studio LLC agree to in the 2026 engagement letter?",
+      "expected": "eng_05 p.1",
+      "paraphrased": false,
+      "hit": true,
+      "rank": 1,
+      "citedCorrectly": true,
+      "top": "eng_05 p.1"
+    },
+    {
+      "id": "q_24",
+      "question": "What did Riverton Credit Union report for Samuel Brooks for 2025?",
+      "expected": "tax_02 p.1",
+      "paraphrased": true,
+      "hit": true,
+      "rank": 1,
+      "citedCorrectly": true,
+      "top": "tax_02 p.1"
+    },
+    {
+      "id": "q_25",
+      "question": "What is the total due on invoice NO-96440 from Northwind Office Supplies?",
+      "expected": "inv_01 p.1",
+      "paraphrased": false,
+      "hit": true,
+      "rank": 1,
+      "citedCorrectly": true,
+      "top": "inv_01 p.1"
+    },
+    {
+      "id": "q_26",
+      "question": "What is the closing balance on the Summit Savings Bank statement for account 8884?",
+      "expected": "stm_02 p.1",
+      "paraphrased": false,
+      "hit": true,
+      "rank": 1,
+      "citedCorrectly": true,
+      "top": "stm_02 p.1"
+    },
+    {
+      "id": "q_27",
+      "question": "What did Summit Savings Bank report for Hana Kim for 2025?",
+      "expected": "tax_03 p.1",
+      "paraphrased": true,
+      "hit": true,
+      "rank": 1,
+      "citedCorrectly": true,
+      "top": "tax_03 p.1"
+    },
+    {
+      "id": "q_28",
+      "question": "What is the total due on invoice CO-15089 from Cobalt Tech Supply?",
+      "expected": "inv_02 p.1",
+      "paraphrased": false,
+      "hit": true,
+      "rank": 1,
+      "citedCorrectly": true,
+      "top": "inv_02 p.1"
+    },
+    {
+      "id": "q_29",
+      "question": "What is the closing balance on the Meridian Trust Bank statement for account 8636?",
+      "expected": "stm_03 p.1",
+      "paraphrased": false,
+      "hit": true,
+      "rank": 1,
+      "citedCorrectly": true,
+      "top": "stm_03 p.1"
+    },
+    {
+      "id": "q_30",
+      "question": "What did Coastal Health Partners report for Okoro Family Trust for 2025?",
+      "expected": "tax_04 p.1",
+      "paraphrased": true,
+      "hit": true,
+      "rank": 1,
+      "citedCorrectly": true,
+      "top": "tax_04 p.1"
+    }
+  ],
+  "changes": [
+    "First run (rules baseline, 2026-11-09): field accuracy 82.1%, wrong-client filings 0, review rate 25.0%, search hit rate 100%, citation accuracy 56.7%.",
+    "Dataset fixes, not system improvements: a printed $0.00 tax was labelled as missing; several questions had two right answers (two engagement letters for the same client and year), so clients are now dealt without repeats and a question is only asked when exactly one document matches it; hard cases (multi-page, prior year, look-alike, missing fields) are asked about first so they can't drop out of the 30 questions.",
+    "Rules extractor: reads the vendor after a 'Tax Invoice - ' heading and drops a bank's division suffix ('- Business Banking'). With the label fix above, field accuracy went from 82.1% to 84.0%.",
+    "Search: every passage now starts with a context line (document title, client, page), filed documents get a descriptive title from their extraction instead of the file name, and exact identifiers in a question (invoice and account numbers) are a third ranked list in the fusion. Together with the question-set fixes, citation accuracy went from 56.7% to 96.7%; the split between the two was not measured.",
+    "Matching (before the first run): a leading 'The' is ignored, so 'The Okoro Family Trust' matches 'Okoro Family Trust'.",
+    "Still missing targets with the rules baseline: field accuracy and review rate fail on prose layouts and simulated scans, which the regex extractor cannot read. That is the Claude extractor's job: run `npm run eval -- --extractor=claude` (about $0.10–0.30 per run) for the numbers that matter."
+  ]
+}
