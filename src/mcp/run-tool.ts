@@ -2,10 +2,12 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { Db } from '../db/index.js';
 import { recordAudit } from '../domain/audit.js';
 import type { Actor } from '../domain/types.js';
+import type { AppServices } from '../services.js';
 
 export interface ToolContext {
   db: Db;
   actor: Actor;
+  services: AppServices;
 }
 
 export interface ToolResult<T extends Record<string, unknown>> {
