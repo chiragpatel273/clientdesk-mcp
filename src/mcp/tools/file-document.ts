@@ -1,5 +1,6 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
+import { inferTaxYear } from '../../ai/extraction.js';
 import { canAccessClient } from '../../domain/access.js';
 import { getDocument, markFiled, retitleAndReindex } from '../../domain/documents.js';
 import { computeMatch, ensureExtraction } from '../../domain/intake.js';
@@ -96,7 +97,7 @@ export function registerFileDocument(server: McpServer, ctx: ToolContext): void 
           };
         }
 
-        const taxYear = input.taxYear ?? extraction.taxYear;
+        const taxYear = input.taxYear ?? inferTaxYear(extraction);
         const docType = extraction.docType;
         if (
           !(await markFiled(ctx.db, {

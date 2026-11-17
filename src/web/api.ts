@@ -1,3 +1,4 @@
+import { inferTaxYear } from '../ai/extraction.js';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import express, { type NextFunction, type Request, type Response, Router } from 'express';
@@ -194,7 +195,9 @@ export function createApiRouter(deps: Deps): Router {
     const taxYear =
       Number.isInteger(input.taxYear) && input.taxYear >= 2000 && input.taxYear <= 2100
         ? (input.taxYear as number)
-        : (doc.extraction?.taxYear ?? null);
+        : doc.extraction
+          ? inferTaxYear(doc.extraction)
+          : null;
     const docType = doc.extraction?.docType ?? null;
     if (!(await markFiled(db, { id: doc.id, clientId: input.clientId, taxYear, docType, staffId: actor.staffId }))) {
       return error(res, 409, 'The document changed; reload the queue');

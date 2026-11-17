@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { normalizeAmount, normalizeDate, normalizeValue, type Extraction } from '../src/ai/extraction.js';
+import { inferTaxYear, normalizeAmount, normalizeDate, normalizeValue, type Extraction } from '../src/ai/extraction.js';
 import { rulesExtractor } from '../src/ai/rules-extractor.js';
 import { invoicePages, ocrNoise, statementPages, taxFormPages } from '../src/demo/templates.js';
 import { CLIENTS, CONTACTS } from '../src/demo/firm.js';
@@ -46,6 +46,40 @@ describe('normalisation', () => {
     expect(normalizeEntity('Acme Ltd.')).toBe('acme');
     expect(normalizeEntity('Harbor & Pine Partners')).toBe('harbor and pine partners');
     expect(nameSimilarity('Acme Ltd', 'ACME LIMITED')).toBe(1);
+  });
+});
+
+describe('tax year when filing', () => {
+  const doc = (docType: Extraction['docType'], fields: [string, string | null][], taxYear: number | null = null) =>
+    ({
+      docType,
+      docTypeConfidence: 0.9,
+      clientName: 'Acme Ltd',
+      taxYear,
+      fields: fields.map(([name, value]) => ({ name, value, confidence: 0.9 })),
+      model: 'test',
+    }) satisfies Extraction;
+
+  it("keeps the model's tax year", () => {
+    expect(inferTaxYear(doc('invoice', [['invoice_date', '2025-12-30']], 2026))).toBe(2026);
+  });
+
+  it('falls back to the year field, then the key date', () => {
+    expect(inferTaxYear(doc('tax_form', [['tax_year', '2025']]))).toBe(2025);
+    expect(inferTaxYear(doc('invoice', [['invoice_date', '2026-11-03']]))).toBe(2026);
+    expect(
+      inferTaxYear(
+        doc('bank_statement', [
+          ['period_start', '2025-12-01'],
+          ['period_end', '2026-01-31'],
+        ]),
+      ),
+    ).toBe(2026);
+  });
+
+  it('stays empty when nothing is readable', () => {
+    expect(inferTaxYear(doc('invoice', [['invoice_date', null]]))).toBeNull();
+    expect(inferTaxYear(doc('other', []))).toBeNull();
   });
 });
 

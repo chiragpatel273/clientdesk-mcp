@@ -201,3 +201,26 @@ export function weakestConfidence(extraction: Extraction): number {
 export function fieldValue(extraction: Extraction, name: string): string | null {
   return extraction.fields.find((x) => x.name === name)?.value ?? null;
 }
+
+/** Date fields whose year is the document's tax year, best first, when the model gave no tax year. */
+const TAX_YEAR_DATES: Partial<Record<DocType, string[]>> = {
+  invoice: ['invoice_date'],
+  bank_statement: ['period_end', 'period_start'],
+  engagement_letter: ['signed_date'],
+};
+
+/**
+ * The tax year to file under: the model's answer, else a `year` field (engagement letters, tax forms), else the year
+ * of the document's key date (invoice date, statement period end). Null when none of them can be read.
+ */
+export function inferTaxYear(extraction: Extraction): number | null {
+  if (extraction.taxYear) return extraction.taxYear;
+  if (extraction.docType === 'other') return null;
+  const year = fieldValue(extraction, 'tax_year');
+  if (year && /^\d{4}$/.test(year)) return Number(year);
+  for (const name of TAX_YEAR_DATES[extraction.docType] ?? []) {
+    const date = fieldValue(extraction, name)?.match(/^(\d{4})-\d{2}-\d{2}$/);
+    if (date) return Number(date[1]);
+  }
+  return null;
+}
