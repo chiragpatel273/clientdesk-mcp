@@ -40,7 +40,7 @@ Quality bar: a client should be able to read the repo, watch a 3-minute video an
 - PDFs: text layer via pdf.js; scanned pages sent to Claude as PDF (no separate OCR).
 - Sign-in: hosted OAuth provider with dynamic client registration. Try WorkOS AuthKit first, Auth0 as fallback.
 - CRM: built-in mini-CRM behind an adapter interface; a HubSpot adapter only if Day 8 has time.
-- Files: Cloudflare R2. Hosting: Render or Fly.io.
+- Files: Amazon S3 (any S3-compatible service, e.g. R2, by config). Hosting: Render or Fly.io.
 - Dashboard: React + Vite (SPA, TypeScript) with Tailwind CSS v4 and shadcn/ui; TanStack Query for data, TanStack
   Table for the audit log and review queue, Recharts for accuracy scores. Lives in `dashboard/`, built to static files
   and served by the existing server at `/dashboard`. It reads a small JSON API (`/api/*`) in the same process, so
@@ -94,7 +94,7 @@ If a phase runs over, cut the HubSpot adapter and the demo login first, never th
   RRF). Extraction: Claude Haiku 5.5 with structured outputs, Opus 5.5 when any required field is below 0.8 (server-side
   refusal fallback on the Opus call); `rules` extractor offline. Matching scores every client with reasons; file only at
   ≥ 0.85 and 0.15 clear of the runner-up (`FILE_THRESHOLD`, `FILE_MARGIN`); look-alikes need a second identifier.
-  All 8 tools, signed expiring document links (`/files/:id`, re-checked + audited on open), R2/local storage, demo
+  All 8 tools, signed expiring document links (`/files/:id`, re-checked + audited on open), S3/local storage, demo
   documents (3 inbox documents drive demo moments 2–4).
 - **Day 6 (done, baseline):** `eval/dataset.ts` (60 docs, 30 questions, deterministic), `npm run eval`. Rules baseline:
   field accuracy 84.0%, wrong-client 0, review rate 25.0%, hit rate 100%, citation 96.7%. Changes and their effect in
@@ -126,8 +126,9 @@ If a phase runs over, cut the HubSpot adapter and the demo login first, never th
 
 Done: 1 `.env.example`, 2 local run, 3 eval (Groq), 4 WorkOS, 5 Claude connector gate.
 
-6. **Deploy.** Neon project (copy the connection string), R2 bucket `clientdesk-documents` + API token, Render → New →
-   Blueprint → this repo; fill the `sync: false` values (add `GROQ_API_KEY`). Set `PUBLIC_URL` to the Render URL and
+6. **Deploy.** Neon project (copy the connection string, region Oregon). Amazon S3 bucket in `us-west-2` plus an IAM
+   user whose only permission is `s3:GetObject`/`s3:PutObject` on that bucket; check the keys with
+   `STORAGE=s3 npm run storage:check`. Render → New → Blueprint → this repo; fill the `sync: false` values. Set `PUBLIC_URL` to the Render URL and
    redeploy; add `<render-url>/mcp` as a WorkOS Resource Indicator (default). Use Production WorkOS keys for real
    clients; staging is fine for the demo.
 7. **Dashboard sign-in** (optional; the plan allows cutting it). A WorkOS OAuth app with redirect

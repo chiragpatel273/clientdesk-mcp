@@ -62,9 +62,15 @@ const EnvSchema = z.object({
   EMBEDDINGS: z.enum(['auto', 'voyage', 'local']).default('auto'),
   VOYAGE_API_KEY: z.string().min(1).optional(),
 
-  /** `local` writes under FILES_DIR; `r2` uses Cloudflare R2 (S3 API). */
-  STORAGE: z.enum(['local', 'r2']).default('local'),
+  /** `local` writes under FILES_DIR; `s3` uses Amazon S3 (or any S3-compatible service); `r2` uses Cloudflare R2. */
+  STORAGE: z.enum(['local', 's3', 'r2']).default('local'),
   FILES_DIR: z.string().default('.data/files'),
+  S3_BUCKET: z.string().min(1).optional(),
+  S3_REGION: z.string().min(1).optional(),
+  /** Only for S3-compatible services other than AWS (Backblaze B2, Supabase, MinIO): their endpoint URL. */
+  S3_ENDPOINT: z.url().optional(),
+  AWS_ACCESS_KEY_ID: z.string().min(1).optional(),
+  AWS_SECRET_ACCESS_KEY: z.string().min(1).optional(),
   R2_ACCOUNT_ID: z.string().min(1).optional(),
   R2_ACCESS_KEY_ID: z.string().min(1).optional(),
   R2_SECRET_ACCESS_KEY: z.string().min(1).optional(),
@@ -83,7 +89,18 @@ export type OAuthConfig = {
   emailClaim: string;
 };
 
-export type R2Config = { accountId: string; accessKeyId: string; secretAccessKey: string; bucket: string };
+/**
+ * An S3-API bucket. `endpoint` set: path-style requests to that host (R2, B2, MinIO). Unset: Amazon S3,
+ * virtual-hosted style (`<bucket>.s3.<region>.amazonaws.com`).
+ */
+export type S3Config = {
+  provider: 'S3' | 'R2';
+  bucket: string;
+  region: string;
+  endpoint: string | undefined;
+  accessKeyId: string;
+  secretAccessKey: string;
+};
 
 export type Config = {
   env: 'development' | 'test' | 'production';
@@ -106,7 +123,7 @@ export type Config = {
   groqApiKey: string | undefined;
   embeddings: 'voyage' | 'local';
   voyageApiKey: string | undefined;
-  storage: { kind: 'local'; dir: string } | ({ kind: 'r2' } & R2Config);
+  storage: { kind: 'local'; dir: string } | ({ kind: 's3' } & S3Config);
   filing: { threshold: number; margin: number };
 };
 
@@ -131,7 +148,8 @@ export function loadDotEnv(path = '.env'): void {
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
-  const parsed = EnvSchema.parse(env);
+  // A blank value (`KEY=` in .env, an empty field in a hosting dashboard) means "not set", not an invalid value.
+  const parsed = EnvSchema.parse(Object.fromEntries(Object.entries(env).filter(([, value]) => value !== '')));
   const publicUrl = parsed.PUBLIC_URL ? new URL(parsed.PUBLIC_URL) : undefined;
   const production = parsed.NODE_ENV === 'production';
 
@@ -167,16 +185,32 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   }
 
   let storage: Config['storage'] = { kind: 'local', dir: parsed.FILES_DIR };
+  if (parsed.STORAGE === 's3') {
+    const keys = ['S3_BUCKET', 'S3_REGION', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY'] as const;
+    const missing = keys.filter((key) => !parsed[key]);
+    if (missing.length > 0) throw new Error(`STORAGE=s3 requires ${missing.join(', ')}.`);
+    storage = {
+      kind: 's3',
+      provider: 'S3',
+      bucket: parsed.S3_BUCKET!,
+      region: parsed.S3_REGION!,
+      endpoint: parsed.S3_ENDPOINT,
+      accessKeyId: parsed.AWS_ACCESS_KEY_ID!,
+      secretAccessKey: parsed.AWS_SECRET_ACCESS_KEY!,
+    };
+  }
   if (parsed.STORAGE === 'r2') {
     const keys = ['R2_ACCOUNT_ID', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'R2_BUCKET'] as const;
     const missing = keys.filter((key) => !parsed[key]);
     if (missing.length > 0) throw new Error(`STORAGE=r2 requires ${missing.join(', ')}.`);
     storage = {
-      kind: 'r2',
-      accountId: parsed.R2_ACCOUNT_ID!,
+      kind: 's3',
+      provider: 'R2',
+      bucket: parsed.R2_BUCKET!,
+      region: 'auto',
+      endpoint: `https://${parsed.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
       accessKeyId: parsed.R2_ACCESS_KEY_ID!,
       secretAccessKey: parsed.R2_SECRET_ACCESS_KEY!,
-      bucket: parsed.R2_BUCKET!,
     };
   }
 

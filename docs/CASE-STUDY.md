@@ -61,7 +61,7 @@ labelling mistakes in the question set, brought it to 96.7%. The report says pla
 
 TypeScript, MCP SDK (Streamable HTTP + stdio), Postgres + pgvector (Neon; PGlite locally and in tests), Claude API
 with structured outputs, Voyage embeddings, pdf.js, WorkOS AuthKit (OAuth with dynamic client registration),
-Cloudflare R2, React + Vite + Tailwind + shadcn/ui, Render. Built with Claude Code, using project skills for adding
+Amazon S3, React + Vite + Tailwind + shadcn/ui, Render. Built with Claude Code, using project skills for adding
 tools and migrations and a security-review skill run before each commit.
 
 ## Numbers that matter to a client

@@ -1,6 +1,6 @@
 # Render blueprint: New → Blueprint → pick this repo. Secrets marked `sync: false` are asked for on first deploy.
 # Database: create a free Neon project and paste its connection string as DATABASE_URL (pgvector is enabled by the
-# first migration). Files: a Cloudflare R2 bucket (Render's disk is wiped on every deploy).
+# first migration). Files: an Amazon S3 bucket (Render's disk is wiped on every deploy); STORAGE=r2 also works.
 services:
   - type: web
     name: clientdesk-mcp
@@ -31,18 +31,20 @@ services:
       - key: DATABASE_URL
         sync: false # Neon connection string, postgres://...?sslmode=require
       - key: ANTHROPIC_API_KEY
-        sync: false
+        sync: false # optional; leave blank to use Groq
+      - key: GROQ_API_KEY
+        sync: false # free extractor (console.groq.com); used when ANTHROPIC_API_KEY is blank
       - key: VOYAGE_API_KEY
-        sync: false
+        sync: false # optional; blank uses the built-in local embeddings
       - key: STORAGE
-        value: r2
-      - key: R2_ACCOUNT_ID
+        value: s3
+      - key: S3_BUCKET
+        sync: false # bucket names are global, e.g. clientdesk-documents-yourname
+      - key: S3_REGION
+        sync: false # the bucket's region, e.g. us-west-2 (`npm run storage:check` tells you if it's wrong)
+      - key: AWS_ACCESS_KEY_ID
+        sync: false # an IAM user allowed to read and write this one bucket only
+      - key: AWS_SECRET_ACCESS_KEY
         sync: false
-      - key: R2_ACCESS_KEY_ID
-        sync: false
-      - key: R2_SECRET_ACCESS_KEY
-        sync: false
-      - key: R2_BUCKET
-        value: clientdesk-documents
       - key: SEED_DEMO
         value: '1'

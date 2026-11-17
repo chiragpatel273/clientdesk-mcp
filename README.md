@@ -96,7 +96,8 @@ Claude connects from Anthropic's cloud, so the server needs a public HTTPS URL a
 ## Deploy
 
 `render.yaml` (Render blueprint) + `Dockerfile` build the server and dashboard into one image. Production uses
-Neon (Postgres + pgvector) via `DATABASE_URL` and Cloudflare R2 for files (`STORAGE=r2`). Production refuses to
+Neon (Postgres + pgvector) via `DATABASE_URL` and Amazon S3 for files (`STORAGE=s3`, an IAM key limited to one
+bucket; Cloudflare R2 and other S3-compatible services also work). Production refuses to
 start without OAuth, an https `PUBLIC_URL`, `SESSION_SECRET` and `LINK_SECRET`.
 
 ## Architecture
@@ -113,7 +114,7 @@ src/mcp/tools/* ── runTool() → audit row              │
         ▼                                             ▼
 src/domain/* ── access, clients, documents, intake, matching, search, audit (plain functions over Db)
         ▼                       ▼                         ▼
-src/db/ (PGlite / Neon)   src/ai/ (Claude, Voyage,   src/storage/ (local / R2)
+src/db/ (PGlite / Neon)   src/ai/ (Claude, Voyage,   src/storage/ (local / S3)
                           offline fallbacks)
 ```
 

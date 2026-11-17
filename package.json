@@ -12,6 +12,7 @@
     "eval": "tsx scripts/eval.ts",
     "eval:claude": "tsx scripts/eval.ts --extractor=claude",
     "workos:users": "tsx scripts/workos-users.ts",
+    "storage:check": "tsx scripts/storage-check.ts",
     "dashboard:install": "npm --prefix dashboard ci",
     "dashboard:dev": "npm --prefix dashboard run dev",
     "dashboard:build": "npm --prefix dashboard run build",
