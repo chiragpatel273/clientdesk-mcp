@@ -7,6 +7,15 @@ measured accuracy report.
 
 All data is fictional: the demo firm is _Northbridge Advisory_ with 3 staff, 12 clients and 13 documents.
 
+## Demo
+
+- **Video:** [2-minute walkthrough](https://youtu.be/hFSXsezX2ac): Claude, signed in as an assistant, answers with
+  citations, files an invoice, sends a blurry scan to review and is refused a client it isn't assigned to; then the
+  partner's dashboard shows the audit trail, the review queue and the accuracy report.
+- **Live dashboard:** https://clientdesk-mcp.onrender.com/dashboard (sign-in required; the MCP endpoint is
+  `https://clientdesk-mcp.onrender.com/mcp`). Hosted on Render's free plan, so the first request after a quiet spell
+  takes about a minute to wake the server.
+
 ## What it proves
 
 | Concern                 | How ClientDesk handles it                                                                                                                                                                                               |
@@ -38,20 +47,29 @@ Claude asks before running them.
 
 ## Accuracy
 
-The latest report is in [`eval/report.md`](eval/report.md) and on the dashboard's Accuracy page. The committed
-report uses the **offline rules baseline** (free, deterministic, run in CI on every push):
+The latest report is [`eval/report.md`](eval/report.md) (also on the dashboard's Accuracy page): extraction by
+**Groq `openai/gpt-oss-20b`, escalating to `openai/gpt-oss-120b`** when the document type or a required field is below 0.8 confidence,
+search with **`local-hash-v1`** embeddings, on 60 labelled documents and 30 questions with a known source page.
 
-| Metric                  | Rules baseline | Target |
-| ----------------------- | -------------- | ------ |
-| Field accuracy          | 84.0%          | ≥ 95%  |
-| Wrong-client filings    | 0              | 0      |
-| Review-queue rate       | 25.0%          | ≤ 10%  |
-| Search hit rate (top 5) | 100%           | ≥ 90%  |
-| Citation accuracy       | 96.7%          | ≥ 95%  |
+| Metric                  | Latest report (Groq gpt-oss) | Offline rules baseline | Target |
+| ----------------------- | ---------------------------- | ---------------------- | ------ |
+| Field accuracy          | **98.1%**                    | 84.0%                  | ≥ 95%  |
+| Wrong-client filings    | **0**                        | 0                      | 0      |
+| Review-queue rate       | **10.0%**                    | 25.0%                  | ≤ 10%  |
+| Search hit rate (top 5) | **100%**                     | 100%                   | ≥ 90%  |
+| Citation accuracy       | **93.3%: misses the target** | 96.7%                  | ≥ 95%  |
 
-The baseline can't read prose layouts or noisy scans, so those go to review: that is the safe failure, not a wrong
-filing. The Claude extractor (Haiku 5.5, escalating to Opus 5.5 when unsure) is measured with
-`npm run eval:claude` (about $0.10–0.30 a run). The report lists every case, every miss and what was changed.
+Four of five targets are met. Citation accuracy misses: in 2 of 30 questions the top passage is from the right
+document but the wrong page, or from a similar form. Every remaining extraction error went to the review queue,
+none to the wrong client. The offline rules baseline is free and deterministic; CI runs it on every push and fails
+the build on any wrong-client filing.
+
+**Supported but not measured yet:** the Claude extractor (Haiku 5.5, escalating to Opus 5.5; it can also read
+image-only scans) and Voyage embeddings. `local-hash-v1` is a keyword-style embedder (hashed word and word-pair features, no model)
+chosen to keep the demo free to run; Voyage (`voyage-3.5`) is the drop-in for real semantic search: set
+`VOYAGE_API_KEY` and reseed. Measure either with `npm run eval -- --extractor=groq`, `npm run eval:claude` (about
+$0.10–0.30 a run) or plain `npm run eval` with the keys set. The report lists every case, every miss and what was
+changed.
 
 ## Run it locally
 
@@ -67,8 +85,8 @@ npm run check        # typecheck + lint + tests
 npm run eval         # accuracy report → eval/report.md, eval/report.json
 ```
 
-Add `ANTHROPIC_API_KEY` (extraction with Claude) and `VOYAGE_API_KEY` (embeddings) to `.env` to use the real
-models; everything else stays the same. `npm run seed -- --reset` reloads the demo firm.
+Add `GROQ_API_KEY` (free tier; the extractor the live demo uses) or `ANTHROPIC_API_KEY` (Claude), and
+`VOYAGE_API_KEY` (semantic embeddings) to `.env` to use real models; everything else stays the same. `npm run seed -- --reset` reloads the demo firm.
 
 For dashboard development with hot reload: `npm run dev` in one terminal, `npm run dashboard:dev` in another
 (Vite on :5173, proxied to the server).
@@ -114,8 +132,8 @@ src/mcp/tools/* ── runTool() → audit row              │
         ▼                                             ▼
 src/domain/* ── access, clients, documents, intake, matching, search, audit (plain functions over Db)
         ▼                       ▼                         ▼
-src/db/ (PGlite / Neon)   src/ai/ (Claude, Voyage,   src/storage/ (local / S3)
-                          offline fallbacks)
+src/db/ (PGlite / Neon)   src/ai/ (Groq, Claude,     src/storage/ (local / S3)
+                          Voyage, offline fallbacks)
 ```
 
 ## Built with Claude Code
