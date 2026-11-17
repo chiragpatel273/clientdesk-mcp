@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-11-09T12:48:24.718Z",
-  "extractor": "rules-v1 (offline baseline)",
+  "generatedAt": "2026-11-09T17:06:33.067Z",
+  "extractor": "groq (openai/gpt-oss-20b, escalating to openai/gpt-oss-120b)",
   "embedder": "local-hash-v1",
   "thresholds": {
     "threshold": 0.85,
@@ -14,11 +14,11 @@
     {
       "key": "field_accuracy",
       "label": "Field accuracy",
-      "value": 0.8404761904761905,
+      "value": 0.9809523809523809,
       "target": 0.95,
       "op": ">=",
       "unit": "percent",
-      "pass": false
+      "pass": true
     },
     {
       "key": "wrong_client_filings",
@@ -32,11 +32,11 @@
     {
       "key": "review_rate",
       "label": "Review-queue rate",
-      "value": 0.25,
+      "value": 0.1,
       "target": 0.1,
       "op": "<=",
       "unit": "percent",
-      "pass": false
+      "pass": true
     },
     {
       "key": "search_hit_rate",
@@ -50,44 +50,44 @@
     {
       "key": "citation_accuracy",
       "label": "Citation accuracy",
-      "value": 0.9666666666666667,
+      "value": 0.9333333333333333,
       "target": 0.95,
       "op": ">=",
       "unit": "percent",
-      "pass": true
+      "pass": false
     }
   ],
   "byDocType": [
     {
       "docType": "invoice",
       "documents": 15,
-      "fieldAccuracy": 0.8666666666666667,
-      "reviewRate": 0.3333333333333333
+      "fieldAccuracy": 0.975,
+      "reviewRate": 0.13333333333333333
     },
     {
       "docType": "bank_statement",
       "documents": 15,
-      "fieldAccuracy": 0.8833333333333333,
-      "reviewRate": 0.26666666666666666
+      "fieldAccuracy": 0.9916666666666667,
+      "reviewRate": 0.13333333333333333
     },
     {
       "docType": "engagement_letter",
       "documents": 15,
-      "fieldAccuracy": 0.7777777777777778,
-      "reviewRate": 0.2
+      "fieldAccuracy": 0.9777777777777777,
+      "reviewRate": 0.13333333333333333
     },
     {
       "docType": "tax_form",
       "documents": 15,
-      "fieldAccuracy": 0.8111111111111111,
-      "reviewRate": 0.2
+      "fieldAccuracy": 0.9777777777777777,
+      "reviewRate": 0
     }
   ],
   "decisions": {
-    "filedCorrectly": 45,
+    "filedCorrectly": 54,
     "filedWrongly": 0,
     "reviewedAsExpected": 2,
-    "reviewedUnnecessarily": 13
+    "reviewedUnnecessarily": 4
   },
   "cases": [
     {
@@ -98,7 +98,7 @@
       "outcome": "filed to cl_marlow",
       "correct": true,
       "fieldErrors": [],
-      "model": "rules-v1"
+      "model": "openai/gpt-oss-20b"
     },
     {
       "id": "inv_02",
@@ -108,7 +108,7 @@
       "outcome": "filed to cl_acme",
       "correct": true,
       "fieldErrors": [],
-      "model": "rules-v1"
+      "model": "openai/gpt-oss-20b"
     },
     {
       "id": "inv_03",
@@ -118,7 +118,7 @@
       "outcome": "sent to review",
       "correct": true,
       "fieldErrors": [],
-      "model": "rules-v1"
+      "model": "openai/gpt-oss-20b"
     },
     {
       "id": "inv_04",
@@ -128,7 +128,7 @@
       "outcome": "filed to cl_acme_labs",
       "correct": true,
       "fieldErrors": [],
-      "model": "rules-v1"
+      "model": "openai/gpt-oss-20b"
     },
     {
       "id": "inv_05",
@@ -138,7 +138,7 @@
       "outcome": "filed to cl_lakeside",
       "correct": true,
       "fieldErrors": [],
-      "model": "rules-v1"
+      "model": "openai/gpt-oss-20b"
     },
     {
       "id": "inv_06",
@@ -148,7 +148,7 @@
       "outcome": "filed to cl_greenfield",
       "correct": true,
       "fieldErrors": [],
-      "model": "rules-v1"
+      "model": "openai/gpt-oss-20b"
     },
     {
       "id": "inv_07",
@@ -158,41 +158,27 @@
       "outcome": "filed to cl_harbor_pine",
       "correct": true,
       "fieldErrors": [],
-      "model": "rules-v1"
+      "model": "openai/gpt-oss-20b"
     },
     {
       "id": "inv_08",
       "docType": "invoice",
       "hardCase": "prose layout",
       "expected": "file to cl_harbor_pine",
-      "outcome": "sent to review",
+      "outcome": "filed to cl_harbor_pine",
       "correct": false,
-      "fieldErrors": [
-        "invoice_number: expected AT-40776, got ∅",
-        "invoice_date: expected 2026-06-18, got ∅",
-        "due_date: expected 2026-07-21, got ∅",
-        "billed_to: expected Harbor & Pine Partners, got ∅",
-        "total_amount: expected 589.33, got ∅",
-        "tax_amount: expected 43.65, got ∅"
-      ],
-      "model": "rules-v1"
+      "fieldErrors": ["currency: expected USD, got ∅"],
+      "model": "openai/gpt-oss-20b"
     },
     {
       "id": "inv_09",
       "docType": "invoice",
       "hardCase": "prose layout",
       "expected": "file to cl_acme",
-      "outcome": "sent to review",
-      "correct": false,
-      "fieldErrors": [
-        "invoice_number: expected NO-79593, got ∅",
-        "invoice_date: expected 2026-05-18, got ∅",
-        "due_date: expected 2026-06-16, got ∅",
-        "billed_to: expected Acme Ltd, got ∅",
-        "total_amount: expected 2084.53, got ∅",
-        "tax_amount: expected 154.41, got ∅"
-      ],
-      "model": "rules-v1"
+      "outcome": "filed to cl_acme",
+      "correct": true,
+      "fieldErrors": [],
+      "model": "openai/gpt-oss-20b"
     },
     {
       "id": "inv_10",
@@ -201,24 +187,18 @@
       "expected": "file to cl_acme_labs",
       "outcome": "sent to review",
       "correct": false,
-      "fieldErrors": [
-        "billed_to: expected Acme Labs Ltd, got Acmc Labs Ltd"
-      ],
-      "model": "rules-v1"
+      "fieldErrors": ["billed_to: expected Acme Labs Ltd, got Acmc Labs Ltd"],
+      "model": "openai/gpt-oss-20b"
     },
     {
       "id": "inv_11",
       "docType": "invoice",
       "hardCase": "scan (OCR noise)",
       "expected": "file to cl_brightline",
-      "outcome": "sent to review",
+      "outcome": "filed to cl_brightline",
       "correct": false,
-      "fieldErrors": [
-        "due_date: expected 2026-05-20, got ∅",
-        "billed_to: expected Brightline Logistics Inc, got Brlghtline Logistics Inc",
-        "total_amount: expected 631.89, got ∅"
-      ],
-      "model": "rules-v1"
+      "fieldErrors": ["currency: expected USD, got ∅"],
+      "model": "openai/gpt-oss-20b"
     },
     {
       "id": "inv_12",
@@ -228,7 +208,7 @@
       "outcome": "filed to cl_acme",
       "correct": true,
       "fieldErrors": [],
-      "model": "rules-v1"
+      "model": "openai/gpt-oss-20b"
     },
     {
       "id": "inv_13",
@@ -238,7 +218,7 @@
       "outcome": "filed to cl_lakeside",
       "correct": true,
       "fieldErrors": [],
-      "model": "rules-v1"
+      "model": "openai/gpt-oss-20b"
     },
     {
       "id": "inv_14",
@@ -248,7 +228,7 @@
       "outcome": "filed to cl_marlow",
       "correct": true,
       "fieldErrors": [],
-      "model": "rules-v1"
+      "model": "openai/gpt-oss-20b"
     },
     {
       "id": "inv_15",
@@ -258,7 +238,7 @@
       "outcome": "filed to cl_greenfield",
       "correct": true,
       "fieldErrors": [],
-      "model": "rules-v1"
+      "model": "openai/gpt-oss-20b"
     },
     {
       "id": "stm_01",
@@ -268,7 +248,7 @@
       "outcome": "filed to cl_greenfield",
       "correct": true,
       "fieldErrors": [],
-      "model": "rules-v1"
+      "model": "openai/gpt-oss-20b"
     },
     {
       "id": "stm_02",
@@ -278,7 +258,7 @@
       "outcome": "filed to cl_marlow",
       "correct": true,
       "fieldErrors": [],
-      "model": "rules-v1"
+      "model": "openai/gpt-oss-20b"
     },
     {
       "id": "stm_03",
@@ -288,7 +268,7 @@
       "outcome": "filed to cl_harbor_pine",
       "correct": true,
       "fieldErrors": [],
-      "model": "rules-v1"
+      "model": "openai/gpt-oss-20b"
     },
     {
       "id": "stm_04",
@@ -298,7 +278,7 @@
       "outcome": "filed to cl_brightline",
       "correct": true,
       "fieldErrors": [],
-      "model": "rules-v1"
+      "model": "openai/gpt-oss-20b"
     },
     {
       "id": "stm_05",
@@ -308,7 +288,7 @@
       "outcome": "filed to cl_kim",
       "correct": true,
       "fieldErrors": [],
-      "model": "rules-v1"
+      "model": "openai/gpt-oss-20b"
     },
     {
       "id": "stm_06",
@@ -318,7 +298,7 @@
       "outcome": "filed to cl_lakeside",
       "correct": true,
       "fieldErrors": [],
-      "model": "rules-v1"
+      "model": "openai/gpt-oss-20b"
     },
     {
       "id": "stm_07",
@@ -328,41 +308,27 @@
       "outcome": "filed to cl_okoro_trust",
       "correct": true,
       "fieldErrors": [],
-      "model": "rules-v1"
+      "model": "openai/gpt-oss-20b"
     },
     {
       "id": "stm_08",
       "docType": "bank_statement",
       "hardCase": "prose layout",
       "expected": "file to cl_acme_labs",
-      "outcome": "sent to review",
-      "correct": false,
-      "fieldErrors": [
-        "account_holder: expected Acme Labs Ltd, got ∅",
-        "account_last4: expected 8953, got ∅",
-        "period_start: expected 2026-05-01, got ∅",
-        "period_end: expected 2026-05-31, got ∅",
-        "opening_balance: expected 69948.96, got ∅",
-        "closing_balance: expected 68860.53, got ∅"
-      ],
-      "model": "rules-v1"
+      "outcome": "filed to cl_acme_labs",
+      "correct": true,
+      "fieldErrors": [],
+      "model": "openai/gpt-oss-20b"
     },
     {
       "id": "stm_09",
       "docType": "bank_statement",
       "hardCase": "prose layout",
       "expected": "file to cl_brooks",
-      "outcome": "sent to review",
-      "correct": false,
-      "fieldErrors": [
-        "account_holder: expected Samuel Brooks, got ∅",
-        "account_last4: expected 6836, got ∅",
-        "period_start: expected 2026-08-01, got ∅",
-        "period_end: expected 2026-08-31, got ∅",
-        "opening_balance: expected 24262.96, got ∅",
-        "closing_balance: expected 28937.80, got ∅"
-      ],
-      "model": "rules-v1"
+      "outcome": "filed to cl_brooks",
+      "correct": true,
+      "fieldErrors": [],
+      "model": "openai/gpt-oss-20b"
     },
     {
       "id": "stm_10",
@@ -370,11 +336,9 @@
       "hardCase": "scan (OCR noise)",
       "expected": "file to cl_acme",
       "outcome": "filed to cl_acme",
-      "correct": false,
-      "fieldErrors": [
-        "closing_balance: expected 46437.99, got ∅"
-      ],
-      "model": "rules-v1"
+      "correct": true,
+      "fieldErrors": [],
+      "model": "openai/gpt-oss-20b"
     },
     {
       "id": "stm_11",
@@ -383,10 +347,8 @@
       "expected": "file to cl_marlow",
       "outcome": "sent to review",
       "correct": false,
-      "fieldErrors": [
-        "account_holder: expected Marlow Studio LLC, got ∅"
-      ],
-      "model": "rules-v1"
+      "fieldErrors": ["account_holder: expected Marlow Studio LLC, got Morlow Studio LLC"],
+      "model": "openai/gpt-oss-20b"
     },
     {
       "id": "stm_12",
@@ -396,7 +358,7 @@
       "outcome": "sent to review",
       "correct": true,
       "fieldErrors": [],
-      "model": "rules-v1"
+      "model": "openai/gpt-oss-20b"
     },
     {
       "id": "stm_13",
@@ -406,7 +368,7 @@
       "outcome": "filed to cl_brooks",
       "correct": true,
       "fieldErrors": [],
-      "model": "rules-v1"
+      "model": "openai/gpt-oss-20b"
     },
     {
       "id": "stm_14",
@@ -416,7 +378,7 @@
       "outcome": "filed to cl_acme",
       "correct": true,
       "fieldErrors": [],
-      "model": "rules-v1"
+      "model": "openai/gpt-oss-20b"
     },
     {
       "id": "stm_15",
@@ -426,7 +388,7 @@
       "outcome": "filed to cl_lakeside",
       "correct": true,
       "fieldErrors": [],
-      "model": "rules-v1"
+      "model": "openai/gpt-oss-20b"
     },
     {
       "id": "eng_01",
@@ -436,7 +398,7 @@
       "outcome": "filed to cl_brightline",
       "correct": true,
       "fieldErrors": [],
-      "model": "rules-v1"
+      "model": "openai/gpt-oss-20b"
     },
     {
       "id": "eng_02",
@@ -446,7 +408,7 @@
       "outcome": "filed to cl_okoro_trust",
       "correct": true,
       "fieldErrors": [],
-      "model": "rules-v1"
+      "model": "openai/gpt-oss-20b"
     },
     {
       "id": "eng_03",
@@ -456,7 +418,7 @@
       "outcome": "filed to cl_harbor_pine",
       "correct": true,
       "fieldErrors": [],
-      "model": "rules-v1"
+      "model": "openai/gpt-oss-20b"
     },
     {
       "id": "eng_04",
@@ -466,7 +428,7 @@
       "outcome": "filed to cl_kim",
       "correct": true,
       "fieldErrors": [],
-      "model": "rules-v1"
+      "model": "openai/gpt-oss-20b"
     },
     {
       "id": "eng_05",
@@ -476,7 +438,7 @@
       "outcome": "filed to cl_marlow",
       "correct": true,
       "fieldErrors": [],
-      "model": "rules-v1"
+      "model": "openai/gpt-oss-20b"
     },
     {
       "id": "eng_06",
@@ -486,7 +448,7 @@
       "outcome": "filed to cl_brooks",
       "correct": true,
       "fieldErrors": [],
-      "model": "rules-v1"
+      "model": "openai/gpt-oss-20b"
     },
     {
       "id": "eng_07",
@@ -496,7 +458,7 @@
       "outcome": "filed to cl_acme_labs",
       "correct": true,
       "fieldErrors": [],
-      "model": "rules-v1"
+      "model": "openai/gpt-oss-20b"
     },
     {
       "id": "eng_08",
@@ -505,15 +467,8 @@
       "expected": "file to cl_greenfield",
       "outcome": "sent to review",
       "correct": false,
-      "fieldErrors": [
-        "client_name: expected Greenfield Bakery LLC, got ∅",
-        "tax_year: expected 2026, got ∅",
-        "services: expected Annual accounts and corporate tax return, got ∅",
-        "annual_fee: expected 12441.00, got ∅",
-        "signed_date: expected 2026-02-20, got ∅",
-        "signed_by: expected Owen Hart, got ∅"
-      ],
-      "model": "rules-v1"
+      "fieldErrors": ["client_name: expected Greenfield Bakery LLC, got Owen Hart"],
+      "model": "openai/gpt-oss-20b"
     },
     {
       "id": "eng_09",
@@ -522,15 +477,8 @@
       "expected": "file to cl_acme",
       "outcome": "sent to review",
       "correct": false,
-      "fieldErrors": [
-        "client_name: expected Acme Ltd, got ∅",
-        "tax_year: expected 2026, got ∅",
-        "services: expected Annual accounts and corporate tax return, got ∅",
-        "annual_fee: expected 7222.00, got ∅",
-        "signed_date: expected 2026-02-06, got ∅",
-        "signed_by: expected Owen Hart, got ∅"
-      ],
-      "model": "rules-v1"
+      "fieldErrors": ["client_name: expected Acme Ltd, got Owen Hart"],
+      "model": "openai/gpt-oss-20b"
     },
     {
       "id": "eng_10",
@@ -538,29 +486,19 @@
       "hardCase": "scan (OCR noise)",
       "expected": "file to cl_lakeside",
       "outcome": "filed to cl_lakeside",
-      "correct": false,
-      "fieldErrors": [
-        "tax_year: expected 2026, got ∅",
-        "annual_fee: expected 5323.00, got ∅",
-        "signed_by: expected Grace Harbor, got ∅"
-      ],
-      "model": "rules-v1"
+      "correct": true,
+      "fieldErrors": [],
+      "model": "openai/gpt-oss-20b"
     },
     {
       "id": "eng_11",
       "docType": "engagement_letter",
       "hardCase": "scan (OCR noise)",
       "expected": "file to cl_lakeside",
-      "outcome": "sent to review",
-      "correct": false,
-      "fieldErrors": [
-        "client_name: expected Lakeside Dental Group, got ∅",
-        "services: expected Bookkeeping review, payroll filings and year-end accounts, got 8ookkecping review, payroll filings and year-end accounts",
-        "annual_fee: expected 6263.00, got ∅",
-        "signed_date: expected 2026-01-23, got ∅",
-        "signed_by: expected Mia Torres, got Mia Torrcs"
-      ],
-      "model": "rules-v1"
+      "outcome": "filed to cl_lakeside",
+      "correct": true,
+      "fieldErrors": [],
+      "model": "openai/gpt-oss-20b"
     },
     {
       "id": "eng_12",
@@ -570,7 +508,7 @@
       "outcome": "filed to cl_acme_labs",
       "correct": true,
       "fieldErrors": [],
-      "model": "rules-v1"
+      "model": "openai/gpt-oss-20b"
     },
     {
       "id": "eng_13",
@@ -580,7 +518,7 @@
       "outcome": "filed to cl_kim",
       "correct": true,
       "fieldErrors": [],
-      "model": "rules-v1"
+      "model": "openai/gpt-oss-20b"
     },
     {
       "id": "eng_14",
@@ -590,7 +528,7 @@
       "outcome": "filed to cl_okoro_trust",
       "correct": true,
       "fieldErrors": [],
-      "model": "rules-v1"
+      "model": "openai/gpt-oss-20b"
     },
     {
       "id": "eng_15",
@@ -600,7 +538,7 @@
       "outcome": "filed to cl_greenfield",
       "correct": true,
       "fieldErrors": [],
-      "model": "rules-v1"
+      "model": "openai/gpt-oss-20b"
     },
     {
       "id": "tax_01",
@@ -610,7 +548,7 @@
       "outcome": "filed to cl_okoro_trust",
       "correct": true,
       "fieldErrors": [],
-      "model": "rules-v1"
+      "model": "openai/gpt-oss-20b"
     },
     {
       "id": "tax_02",
@@ -620,7 +558,7 @@
       "outcome": "filed to cl_brooks",
       "correct": true,
       "fieldErrors": [],
-      "model": "rules-v1"
+      "model": "openai/gpt-oss-20b"
     },
     {
       "id": "tax_03",
@@ -630,7 +568,7 @@
       "outcome": "filed to cl_kim",
       "correct": true,
       "fieldErrors": [],
-      "model": "rules-v1"
+      "model": "openai/gpt-oss-20b"
     },
     {
       "id": "tax_04",
@@ -640,7 +578,7 @@
       "outcome": "filed to cl_okoro_trust",
       "correct": true,
       "fieldErrors": [],
-      "model": "rules-v1"
+      "model": "openai/gpt-oss-20b"
     },
     {
       "id": "tax_05",
@@ -650,7 +588,7 @@
       "outcome": "filed to cl_brooks",
       "correct": true,
       "fieldErrors": [],
-      "model": "rules-v1"
+      "model": "openai/gpt-oss-20b"
     },
     {
       "id": "tax_06",
@@ -660,7 +598,7 @@
       "outcome": "filed to cl_kim",
       "correct": true,
       "fieldErrors": [],
-      "model": "rules-v1"
+      "model": "openai/gpt-oss-20b"
     },
     {
       "id": "tax_07",
@@ -670,54 +608,37 @@
       "outcome": "filed to cl_brooks",
       "correct": true,
       "fieldErrors": [],
-      "model": "rules-v1"
+      "model": "openai/gpt-oss-20b"
     },
     {
       "id": "tax_08",
       "docType": "tax_form",
       "hardCase": "prose layout",
       "expected": "file to cl_kim",
-      "outcome": "sent to review",
-      "correct": false,
-      "fieldErrors": [
-        "tax_year: expected 2025, got ∅",
-        "recipient_name: expected Hana Kim, got ∅",
-        "recipient_tin_last4: expected 1132, got ∅",
-        "payer_name: expected Summit Savings Bank, got ∅",
-        "amount: expected 10981.06, got ∅"
-      ],
-      "model": "rules-v1"
+      "outcome": "filed to cl_kim",
+      "correct": true,
+      "fieldErrors": [],
+      "model": "openai/gpt-oss-20b"
     },
     {
       "id": "tax_09",
       "docType": "tax_form",
       "hardCase": "prose layout",
       "expected": "file to cl_okoro_trust",
-      "outcome": "sent to review",
-      "correct": false,
-      "fieldErrors": [
-        "tax_year: expected 2025, got ∅",
-        "recipient_name: expected Okoro Family Trust, got ∅",
-        "recipient_tin_last4: expected 6684, got ∅",
-        "payer_name: expected Riverton Credit Union, got ∅",
-        "amount: expected 6157.54, got ∅"
-      ],
-      "model": "rules-v1"
+      "outcome": "filed to cl_okoro_trust",
+      "correct": true,
+      "fieldErrors": [],
+      "model": "openai/gpt-oss-20b"
     },
     {
       "id": "tax_10",
       "docType": "tax_form",
       "hardCase": "scan (OCR noise)",
       "expected": "file to cl_okoro_trust",
-      "outcome": "sent to review",
-      "correct": false,
-      "fieldErrors": [
-        "recipient_name: expected Okoro Family Trust, got Okoro Famlly Trust",
-        "recipient_tin_last4: expected 6684, got ∅",
-        "payer_name: expected Keystone Home Lending, got ∅",
-        "amount: expected 4044.92, got ∅"
-      ],
-      "model": "rules-v1"
+      "outcome": "filed to cl_okoro_trust",
+      "correct": true,
+      "fieldErrors": [],
+      "model": "openai/gpt-oss-20b"
     },
     {
       "id": "tax_11",
@@ -727,11 +648,10 @@
       "outcome": "filed to cl_brooks",
       "correct": false,
       "fieldErrors": [
-        "tax_year: expected 2025, got ∅",
         "recipient_name: expected Samuel Brooks, got Samucl Brooks",
         "payer_name: expected Coastal Health Partners, got Coastal Hcalth Partners"
       ],
-      "model": "rules-v1"
+      "model": "openai/gpt-oss-20b"
     },
     {
       "id": "tax_12",
@@ -741,7 +661,7 @@
       "outcome": "filed to cl_petrovic",
       "correct": true,
       "fieldErrors": [],
-      "model": "rules-v1"
+      "model": "openai/gpt-oss-20b"
     },
     {
       "id": "tax_13",
@@ -751,7 +671,7 @@
       "outcome": "filed to cl_kim",
       "correct": true,
       "fieldErrors": [],
-      "model": "rules-v1"
+      "model": "openai/gpt-oss-20b"
     },
     {
       "id": "tax_14",
@@ -761,7 +681,7 @@
       "outcome": "filed to cl_kim",
       "correct": true,
       "fieldErrors": [],
-      "model": "rules-v1"
+      "model": "openai/gpt-oss-20b"
     },
     {
       "id": "tax_15",
@@ -771,7 +691,7 @@
       "outcome": "filed to cl_brooks",
       "correct": true,
       "fieldErrors": [],
-      "model": "rules-v1"
+      "model": "openai/gpt-oss-20b"
     }
   ],
   "questions": [
@@ -1041,9 +961,9 @@
       "expected": "tax_03 p.1",
       "paraphrased": true,
       "hit": true,
-      "rank": 1,
-      "citedCorrectly": true,
-      "top": "tax_03 p.1"
+      "rank": 2,
+      "citedCorrectly": false,
+      "top": "tax_08 p.1"
     },
     {
       "id": "q_28",
@@ -1082,6 +1002,9 @@
     "Rules extractor: reads the vendor after a 'Tax Invoice - ' heading and drops a bank's division suffix ('- Business Banking'). With the label fix above, field accuracy went from 82.1% to 84.0%.",
     "Search: every passage now starts with a context line (document title, client, page), filed documents get a descriptive title from their extraction instead of the file name, and exact identifiers in a question (invoice and account numbers) are a third ranked list in the fusion. Together with the question-set fixes, citation accuracy went from 56.7% to 96.7%; the split between the two was not measured.",
     "Matching (before the first run): a leading 'The' is ignored, so 'The Okoro Family Trust' matches 'Okoro Family Trust'.",
-    "Still missing targets with the rules baseline: field accuracy and review rate fail on prose layouts and simulated scans, which the regex extractor cannot read. That is the Claude extractor's job: run `npm run eval -- --extractor=claude` (about $0.10–0.30 per run) for the numbers that matter."
+    "Still missing targets with the rules baseline: field accuracy and review rate fail on prose layouts and simulated scans, which the regex extractor cannot read. A model-based extractor (Claude or Groq) is needed for those.",
+    "Groq extractor added (2026-11-09: openai/gpt-oss-20b, escalating to openai/gpt-oss-120b when unsure; Groq's free tier). First run: field accuracy 92.9%, wrong-client filings 0, review rate 13.3%, search hit rate 100%, citation accuracy 93.3%.",
+    "Groq fixes: 4 of the 6 needless reviews were API rejections, not misreads (the model wrote a year or amount as a number where the schema said text, and Groq refused the whole answer). Numbers are now accepted and converted to text, and a failed small-model answer is retried on the large model. The prompt (shared with Claude) now says an absent field is null, never placeholder text like 'Not signed'. Second run: field accuracy 98.1%, wrong-client filings 0, review rate 10.0%, search hit rate 100%, citation accuracy 93.3%; the small model answered all 60 documents.",
+    "Still missing with Groq: citation accuracy (2 of 30 questions: a closing balance on page 2 ranked below page 1 of the same statement, and a paraphrased tax-form question ranked a similar form first). Remaining field errors are OCR misreads ('Acmc Labs') and two prose letters where the model took the signer for the client; all of those went to review rather than the wrong client. Scans with no text layer are not covered: Groq's structured-output models are text only, so those always go to review."
   ]
 }

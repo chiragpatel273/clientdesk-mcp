@@ -1,4 +1,4 @@
-import { loadConfig } from '../src/config.js';
+import { loadConfig, loadDotEnv } from '../src/config.js';
 import { createDb } from '../src/db/index.js';
 import { migrate } from '../src/db/migrate.js';
 import { seedDemoDocuments } from '../src/demo/documents.js';
@@ -6,6 +6,7 @@ import { isSeeded, resetData, seedDemoFirm } from '../src/demo/seed.js';
 import { createServices } from '../src/services.js';
 
 const reset = process.argv.includes('--reset');
+loadDotEnv();
 const config = loadConfig();
 const services = createServices(config);
 const db = await createDb(config.databaseUrl);

@@ -67,14 +67,14 @@ Publish real numbers even when they miss a target, plus what was changed to impr
 
 ## Build plan and gates
 
-| Phase             | Days | Gate to pass before moving on                          | Status                                     |
-| ----------------- | ---- | ------------------------------------------------------ | ------------------------------------------ |
-| Foundation        | 1–2  | Claude calls `get_client` through the connector        | **Done** (pending the owner's local check) |
-| Sign-in and audit | 3    | Sign-in works inside Claude (web) via custom connector | **Code done**, gate pending (WorkOS setup) |
-| Documents         | 4–5  | Cited search + intake flow work end to end             | **Done** (verified over HTTP, offline)     |
-| Accuracy          | 6    | First accuracy report published                        | **Done** (rules baseline); Claude run: owner |
-| Dashboard         | 7    | Audit log, review queue, scores visible                | **Done** (verified against the live API)   |
-| Ship              | 8    | Public launch: deployed, video, case study             | Files ready; deploy, video: owner          |
+| Phase             | Days | Gate to pass before moving on                          | Status                                   |
+| ----------------- | ---- | ------------------------------------------------------ | ---------------------------------------- |
+| Foundation        | 1–2  | Claude calls `get_client` through the connector        | **Done**                                 |
+| Sign-in and audit | 3    | Sign-in works inside Claude (web) via custom connector | **Done** (WorkOS + ngrok, 2026-11-17)    |
+| Documents         | 4–5  | Cited search + intake flow work end to end             | **Done** (verified over HTTP, offline)   |
+| Accuracy          | 6    | First accuracy report published                        | **Done** (Groq run; Claude run optional) |
+| Dashboard         | 7    | Audit log, review queue, scores visible                | **Done** (verified against the live API) |
+| Ship              | 8    | Public launch: deployed, video, case study             | Files ready; deploy, video: owner        |
 
 If a phase runs over, cut the HubSpot adapter and the demo login first, never the accuracy report.
 
@@ -106,6 +106,17 @@ If a phase runs over, cut the HubSpot adapter and the demo login first, never th
   audit rows, without details.
 - **Day 8 (files ready):** `Dockerfile` (built and smoke-tested), `render.yaml`, `docs/DEMO-SCRIPT.md`,
   `docs/CASE-STUDY.md` (with `[[…]]` slots for the Claude numbers and URLs).
+- **2026-11-09 to 11-17 (owner steps 1–5):** `.env` is now loaded by every entry point (`loadDotEnv()`; real env
+  wins). Groq extractor (`src/ai/groq-extractor.ts`: `openai/gpt-oss-20b`, escalating to `gpt-oss-120b`, strict JSON
+  schema, waits out 429s; text only, so scans go to review); the prompt is shared with Claude in
+  `src/ai/extraction-prompt.ts`. Groq eval: field accuracy 98.1%, wrong-client 0, review rate 10.0%, hit rate 100%,
+  citation 93.3% (miss). `npm run workos:users` creates Maya/Tom/Ana as verified users. Sign-in gate passed in
+  claude.ai through WorkOS AuthKit (staging) and a static ngrok domain: Tom refused Lakeside, intake flow works.
+- WorkOS setup that worked: Connect → Configuration with Dynamic Client Registration (and CIMD) on; a Resource
+  Indicator `PUBLIC_URL/mcp` set as default (that makes the token's `aud` equal our resource URL, so no
+  `OAUTH_AUDIENCE` needed); JWT template `{"email": {{ user.email }}}`; Email + Password on. Email verification is
+  always on in AuthKit, so the users are created via the API with `email_verified: true`. No redirect URI setup was
+  needed for Claude (it registers its own).
 - Gotchas found: pdf.js needs `standardFontDataUrl` in Node; Recharts bar animation never finishes in headless Chrome
   (disabled); the review reason once leaked a hidden look-alike client's name to an assistant (now redacted, tested).
 - Checks: typecheck, lint, 83 tests, eval, both builds and the container all pass locally. Vitest is capped at 3
@@ -113,22 +124,15 @@ If a phase runs over, cut the HubSpot adapter and the demo login first, never th
 
 ## Next up: owner's list (in order)
 
-1. **`.env.example`.** Claude Code's permission settings block it; add the new variables listed in `src/config.ts`
-   (`PUBLIC_URL`, `OAUTH_*`, `DASHBOARD_CLIENT_*`, `SESSION_SECRET`, `LINK_SECRET`, `EXTRACTOR`, `ANTHROPIC_API_KEY`,
-   `EMBEDDINGS`, `VOYAGE_API_KEY`, `STORAGE`, `FILES_DIR`, `R2_*`, `FILE_THRESHOLD`, `FILE_MARGIN`).
-2. **Claude eval.** Set a spend limit in the Anthropic console, put `ANTHROPIC_API_KEY` in `.env`, run
-   `npm run eval:claude` (about $0.10–0.30). With `VOYAGE_API_KEY` set too, search uses Voyage. Commit
-   `eval/report.*`, add a line to `eval/changes.json` for anything you change, and fill the case study table.
-3. **WorkOS (Day 3 gate).** AuthKit app, dynamic client registration on, redirect URI
-   `https://claude.ai/api/mcp/auth_callback`, JWT template adding `email` to access tokens, email verification on,
-   users Maya/Tom/Ana with passwords (`@northbridge.example` can't receive mail). For the dashboard, a second regular
-   OAuth client with redirect `PUBLIC_URL/auth/callback` (`DASHBOARD_CLIENT_ID/SECRET`); if AuthKit can't issue one,
-   skip it: the plan allows cutting the demo login.
-4. **Local gate.** `ngrok http 3000`, run with `AUTH_MODE=oauth PUBLIC_URL=https://<ngrok> OAUTH_ISSUER=...`, add the
-   connector in Claude, sign in as Tom then Maya. If requests 401 after sign-in, decode the token's `aud` and set
-   `OAUTH_AUDIENCE` to it (never drop the check). Record the provider and gotchas here.
-5. **Deploy.** Neon project (copy the connection string), R2 bucket + API token, Render → New → Blueprint →
-   this repo; fill the `sync: false` values. Point the WorkOS redirect/allowed origins at the Render URL.
-6. **Video and launch.** Follow `docs/DEMO-SCRIPT.md`, fill `docs/CASE-STUDY.md`, publish.
+Done: 1 `.env.example`, 2 local run, 3 eval (Groq), 4 WorkOS, 5 Claude connector gate.
+
+6. **Deploy.** Neon project (copy the connection string), R2 bucket `clientdesk-documents` + API token, Render → New →
+   Blueprint → this repo; fill the `sync: false` values (add `GROQ_API_KEY`). Set `PUBLIC_URL` to the Render URL and
+   redeploy; add `<render-url>/mcp` as a WorkOS Resource Indicator (default). Use Production WorkOS keys for real
+   clients; staging is fine for the demo.
+7. **Dashboard sign-in** (optional; the plan allows cutting it). A WorkOS OAuth app with redirect
+   `PUBLIC_URL/auth/callback` → `DASHBOARD_CLIENT_ID/SECRET`. Without it the dashboard only works with `AUTH_MODE=dev`.
+8. **Video and launch.** Follow `docs/DEMO-SCRIPT.md`, fill `docs/CASE-STUDY.md` (Groq numbers, or rerun with Claude),
+   update README numbers, publish.
 
 Run the `security-review` skill before each commit.

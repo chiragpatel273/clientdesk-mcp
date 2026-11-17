@@ -1,6 +1,6 @@
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { openDatabase } from './bootstrap.js';
-import { loadConfig } from './config.js';
+import { loadConfig, loadDotEnv } from './config.js';
 import { findActorByEmail } from './domain/staff.js';
 import { createMcpServer } from './mcp/server.js';
 import { createServices } from './services.js';
@@ -11,6 +11,7 @@ import { createServices } from './services.js';
  */
 const log = (msg: string) => console.error(`[clientdesk] ${msg}`);
 
+loadDotEnv();
 const config = loadConfig();
 const services = createServices(config);
 const db = await openDatabase(config, log, services);
