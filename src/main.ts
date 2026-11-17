@@ -1,9 +1,10 @@
 import { setupOAuth } from './auth/oauth.js';
 import { openDatabase } from './bootstrap.js';
-import { baseUrl, loadConfig } from './config.js';
+import { baseUrl, loadConfig, loadDotEnv } from './config.js';
 import { createHttpApp } from './http.js';
 import { createServices } from './services.js';
 
+loadDotEnv();
 const config = loadConfig();
 const oauth = config.authMode === 'oauth' ? await setupOAuth(config) : undefined;
 if (oauth && !oauth.metadata.registration_endpoint) {

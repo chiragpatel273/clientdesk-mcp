@@ -5,15 +5,17 @@
  *   npm run eval                     # extractor from config: Claude if ANTHROPIC_API_KEY is set, else rules
  *   npm run eval -- --extractor=rules
  *   npm run eval -- --extractor=claude
+ *   npm run eval -- --extractor=groq
  *   npm run eval -- --check          # exit 1 if any document was filed to the wrong client (CI)
  */
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { claudeExtractor } from '../src/ai/claude-extractor.js';
+import { GROQ_LARGE_MODEL, GROQ_SMALL_MODEL } from '../src/ai/groq-extractor.js';
+import { LARGE_MODEL, SMALL_MODEL } from '../src/ai/claude-extractor.js';
 import { createEmbedder } from '../src/ai/embeddings.js';
 import { FIELDS, sameValue, type Extraction, type Extractor } from '../src/ai/extraction.js';
-import { rulesExtractor } from '../src/ai/rules-extractor.js';
-import { loadConfig } from '../src/config.js';
+import { loadConfig, loadDotEnv, type ExtractorName } from '../src/config.js';
+import { createExtractor } from '../src/services.js';
 import { createDb } from '../src/db/index.js';
 import { migrate, projectRoot } from '../src/db/migrate.js';
 import { CLIENTS, CONTACTS } from '../src/demo/firm.js';
@@ -31,12 +33,12 @@ const args = new Map(
     return [k!, v ?? 'true'] as const;
   }),
 );
+loadDotEnv();
 const config = loadConfig();
-const extractorName = (args.get('extractor') ?? config.extractor) as 'rules' | 'claude';
-if (extractorName === 'claude' && !config.anthropicApiKey)
-  throw new Error('--extractor=claude needs ANTHROPIC_API_KEY');
-const extractor: Extractor =
-  extractorName === 'claude' ? claudeExtractor({ apiKey: config.anthropicApiKey }) : rulesExtractor();
+const extractorName = (args.get('extractor') ?? config.extractor) as ExtractorName;
+if (!['claude', 'groq', 'rules'].includes(extractorName)) throw new Error(`Unknown extractor ${extractorName}`);
+const extractor: Extractor = createExtractor(config, extractorName);
+const remote = extractorName !== 'rules';
 const embedder = createEmbedder(config);
 const root = projectRoot();
 
@@ -117,7 +119,7 @@ async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promis
       while (next < items.length) {
         const i = next++;
         results[i] = await fn(items[i]!);
-        if (extractorName === 'claude') process.stderr.write('.');
+        if (remote) process.stderr.write('.');
       }
     }),
   );
@@ -125,8 +127,10 @@ async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promis
 }
 
 console.error(`Extracting ${DOCUMENTS.length} documents with ${extractorName}...`);
-const cases = await mapLimit(DOCUMENTS, extractorName === 'claude' ? 4 : 8, runCase);
-if (extractorName === 'claude') process.stderr.write('\n');
+// Groq's free tier allows ~8K tokens a minute, so one document at a time (the extractor waits out 429s).
+const concurrency = { claude: 4, groq: 1, rules: 8 }[extractorName];
+const cases = await mapLimit(DOCUMENTS, concurrency, runCase);
+if (remote) process.stderr.write('\n');
 
 // ---------- search ----------
 
@@ -224,10 +228,11 @@ const changes: string[] = await readFile(join(root, 'eval', 'changes.json'), 'ut
 
 const report = {
   generatedAt: new Date().toISOString(),
-  extractor:
-    extractorName === 'claude'
-      ? 'claude (claude-haiku-5-5, escalating to claude-opus-5-5)'
-      : 'rules-v1 (offline baseline)',
+  extractor: {
+    claude: `claude (${SMALL_MODEL}, escalating to ${LARGE_MODEL})`,
+    groq: `groq (${GROQ_SMALL_MODEL}, escalating to ${GROQ_LARGE_MODEL})`,
+    rules: 'rules-v1 (offline baseline)',
+  }[extractorName],
   embedder: embedder.model,
   thresholds: config.filing,
   dataset: { documents: DOCUMENTS.length, questions: QUESTIONS.length },

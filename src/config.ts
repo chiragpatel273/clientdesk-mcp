@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { z } from 'zod';
 
 const list = (value: string | undefined): string[] | undefined =>
@@ -50,9 +51,13 @@ const EnvSchema = z.object({
     .default('1')
     .transform((v) => v === '1'),
 
-  /** `claude` needs ANTHROPIC_API_KEY; `rules` is the offline extractor used in tests and CI. `auto` picks. */
-  EXTRACTOR: z.enum(['auto', 'claude', 'rules']).default('auto'),
+  /**
+   * `claude` needs ANTHROPIC_API_KEY, `groq` needs GROQ_API_KEY; `rules` is the offline extractor used in tests and CI.
+   * `auto` picks Claude, then Groq, then rules, by which key is set.
+   */
+  EXTRACTOR: z.enum(['auto', 'claude', 'groq', 'rules']).default('auto'),
   ANTHROPIC_API_KEY: z.string().min(1).optional(),
+  GROQ_API_KEY: z.string().min(1).optional(),
   /** `voyage` needs VOYAGE_API_KEY; `local` is a deterministic hashing embedder for tests and offline use. */
   EMBEDDINGS: z.enum(['auto', 'voyage', 'local']).default('auto'),
   VOYAGE_API_KEY: z.string().min(1).optional(),
@@ -96,8 +101,9 @@ export type Config = {
   allowedHosts: string[] | undefined;
   allowedOrigins: string[];
   seedDemo: boolean;
-  extractor: 'claude' | 'rules';
+  extractor: ExtractorName;
   anthropicApiKey: string | undefined;
+  groqApiKey: string | undefined;
   embeddings: 'voyage' | 'local';
   voyageApiKey: string | undefined;
   storage: { kind: 'local'; dir: string } | ({ kind: 'r2' } & R2Config);
@@ -112,6 +118,16 @@ export function mcpResourceUrl(publicUrl: URL): URL {
 /** The origin links point at: PUBLIC_URL, or localhost in development. */
 export function baseUrl(config: Config): URL {
   return config.publicUrl ?? new URL(`http://localhost:${config.port}`);
+}
+
+export type ExtractorName = 'claude' | 'groq' | 'rules';
+
+/**
+ * Loads `.env` from the working directory into process.env, if the file exists. Variables already set in the real
+ * environment win, so a hosting dashboard (Render) always overrides the file. Entry points call this; tests don't.
+ */
+export function loadDotEnv(path = '.env'): void {
+  if (existsSync(path)) process.loadEnvFile(path);
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -142,6 +158,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
 
   if (parsed.EXTRACTOR === 'claude' && !parsed.ANTHROPIC_API_KEY) {
     throw new Error('EXTRACTOR=claude requires ANTHROPIC_API_KEY.');
+  }
+  if (parsed.EXTRACTOR === 'groq' && !parsed.GROQ_API_KEY) {
+    throw new Error('EXTRACTOR=groq requires GROQ_API_KEY.');
   }
   if (parsed.EMBEDDINGS === 'voyage' && !parsed.VOYAGE_API_KEY) {
     throw new Error('EMBEDDINGS=voyage requires VOYAGE_API_KEY.');
@@ -185,8 +204,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     allowedHosts,
     allowedOrigins: [...(list(parsed.ALLOWED_ORIGINS) ?? []), ...(publicUrl ? [publicUrl.origin] : [])],
     seedDemo: parsed.SEED_DEMO,
-    extractor: parsed.EXTRACTOR === 'auto' ? (parsed.ANTHROPIC_API_KEY ? 'claude' : 'rules') : parsed.EXTRACTOR,
+    extractor:
+      parsed.EXTRACTOR !== 'auto'
+        ? parsed.EXTRACTOR
+        : parsed.ANTHROPIC_API_KEY
+          ? 'claude'
+          : parsed.GROQ_API_KEY
+            ? 'groq'
+            : 'rules',
     anthropicApiKey: parsed.ANTHROPIC_API_KEY,
+    groqApiKey: parsed.GROQ_API_KEY,
     embeddings: parsed.EMBEDDINGS === 'auto' ? (parsed.VOYAGE_API_KEY ? 'voyage' : 'local') : parsed.EMBEDDINGS,
     voyageApiKey: parsed.VOYAGE_API_KEY,
     storage,
