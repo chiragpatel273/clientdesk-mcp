@@ -8,9 +8,12 @@ import { App } from './App';
 
 const queryClient: QueryClient = new QueryClient({
   queryCache: new QueryCache({
-    // A 401 on any request means the session ended: re-check /api/me, which swaps in the sign-in screen.
+    // A 401 while signed in means the session ended: re-check /api/me, which swaps in the sign-in screen.
+    // Only while signed in: on the sign-in screen 401s are expected (its dev-mode probe of /api/staff gets one in
+    // oauth mode), and re-checking there remounts the screen, which probes again: an endless request loop.
     onError: (error, query) => {
-      if (isApiError(error, 401) && query.queryKey[0] !== 'me')
+      const signedIn = queryClient.getQueryState(['me'])?.status === 'success';
+      if (isApiError(error, 401) && query.queryKey[0] !== 'me' && signedIn)
         void queryClient.invalidateQueries({ queryKey: ['me'] });
     },
   }),
