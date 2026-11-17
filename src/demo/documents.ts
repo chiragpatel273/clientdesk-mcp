@@ -265,7 +265,7 @@ export const DEMO_DOCUMENTS: DemoDocument[] = [
   },
   {
     // Moment 4 (variant): Tom can see the inbox, but this one belongs to Ana's client, so its contents are withheld.
-    id: 'doc_inbox_lakeside',
+    id: 'doc_inbox_dentalsoft',
     title: 'Invoice DS-58120 from DentalSoft Cloud',
     filename: 'dentalsoft-ds-58120.pdf',
     receivedAt: '2026-11-08T09:40:00Z',

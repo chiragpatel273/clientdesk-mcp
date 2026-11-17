@@ -138,10 +138,10 @@ describe('dashboard API and document links (dev auth)', () => {
 
   it("won't show an assistant an unmatched inbox file that belongs to another team's client", async () => {
     // Nobody has extracted or matched this one yet; viewing it must still follow the same rule as extract_document.
-    await db.query('update documents set extraction = null, match = null where id = $1', ['doc_inbox_lakeside']);
-    expect((await api('/api/documents/doc_inbox_lakeside/file', TOM)).status).toBe(403);
-    expect((await api('/api/documents/doc_inbox_lakeside/file', MAYA)).status).toBe(200);
-    const link = new URL(services.links.url('doc_inbox_lakeside', 'st_tom'));
+    await db.query('update documents set extraction = null, match = null where id = $1', ['doc_inbox_dentalsoft']);
+    expect((await api('/api/documents/doc_inbox_dentalsoft/file', TOM)).status).toBe(403);
+    expect((await api('/api/documents/doc_inbox_dentalsoft/file', MAYA)).status).toBe(200);
+    const link = new URL(services.links.url('doc_inbox_dentalsoft', 'st_tom'));
     expect((await fetch(`${base}${link.pathname}${link.search}`)).status).toBe(403);
   });
 
