@@ -164,9 +164,15 @@ describe('document tools', () => {
       const { data } = await call<{ documents: { id: string }[] }>(tom, 'list_inbox', {});
       expect(data.documents.map((d) => d.id).sort()).toEqual([
         'doc_inbox_blurry_statement',
-        'doc_inbox_lakeside',
+        'doc_inbox_dentalsoft',
         'doc_inbox_northwind',
       ]);
+    });
+
+    it("never names a client the user can't see in an inbox listing", async () => {
+      // Tom isn't assigned to Lakeside: no id, title or filename in his inbox may give it away.
+      const { result } = await call(tom, 'list_inbox', {});
+      expect(JSON.stringify(result).toLowerCase()).not.toMatch(/lakeside|cl_lakeside/);
     });
 
     it('extracts fields with confidences', async () => {
@@ -187,7 +193,7 @@ describe('document tools', () => {
 
     it("withholds the contents of an inbox document that belongs to someone else's client", async () => {
       const { result, data } = await call<{ status: string; fields?: unknown }>(tom, 'extract_document', {
-        documentId: 'doc_inbox_lakeside',
+        documentId: 'doc_inbox_dentalsoft',
       });
       expect(data.status).toBe('denied');
       expect(data.fields).toBeUndefined();
@@ -234,7 +240,7 @@ describe('document tools', () => {
 
     it("denies matching a document that belongs to another team's client, and logs it", async () => {
       const { result, data } = await call<{ status: string; candidates?: unknown }>(tom, 'match_client', {
-        documentId: 'doc_inbox_lakeside',
+        documentId: 'doc_inbox_dentalsoft',
       });
       expect(data.status).toBe('denied');
       expect(data.candidates).toBeUndefined();
@@ -270,7 +276,7 @@ describe('document tools', () => {
 
     it("denies filing to a client the user isn't assigned to", async () => {
       const { data } = await call<{ status: string }>(tom, 'file_document', {
-        documentId: 'doc_inbox_lakeside',
+        documentId: 'doc_inbox_dentalsoft',
         clientId: 'cl_lakeside',
       });
       expect(data.status).toBe('denied');
@@ -366,7 +372,9 @@ describe('document tools', () => {
         (await call<{ status: string }>(tom, 'add_crm_note', { client: 'Lakeside', body: 'hello there' })).data.status,
       ).toBe('denied');
       expect(await lastAudit(db)).toMatchObject({ staff_id: 'st_tom', tool: 'add_crm_note', outcome: 'denied' });
-      const [notes] = await db.query<{ n: number }>("select count(*)::int as n from notes where client_id = 'cl_lakeside'");
+      const [notes] = await db.query<{ n: number }>(
+        "select count(*)::int as n from notes where client_id = 'cl_lakeside'",
+      );
       expect(Number(notes!.n)).toBe(0);
       expect(
         (await call<{ status: string }>(maya, 'add_crm_note', { client: 'Acme', body: 'hello there' })).data.status,
