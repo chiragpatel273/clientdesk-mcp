@@ -124,13 +124,11 @@ If a phase runs over, cut the HubSpot adapter and the demo login first, never th
 
 ## Next up: owner's list (in order)
 
-Done: 1 `.env.example`, 2 local run, 3 eval (Groq), 4 WorkOS, 5 Claude connector gate.
+Done: 1 `.env.example`, 2 local run, 3 eval (Groq), 4 WorkOS, 5 Claude connector gate, 6 deploy (2026-11-17:
+https://clientdesk-mcp.onrender.com on Render free, Neon in us-west-2, S3 bucket in ap-southeast-2, Groq extractor;
+verified in claude.ai as Tom). First deploy lesson: a pasted leading space in `S3_REGION` broke the first start
+half-way through seeding; settings are now trimmed and start-up finishes a partial demo load.
 
-6. **Deploy.** Neon project (copy the connection string, region Oregon). Amazon S3 bucket in `us-west-2` plus an IAM
-   user whose only permission is `s3:GetObject`/`s3:PutObject` on that bucket; check the keys with
-   `STORAGE=s3 npm run storage:check`. Render → New → Blueprint → this repo; fill the `sync: false` values. Set `PUBLIC_URL` to the Render URL and
-   redeploy; add `<render-url>/mcp` as a WorkOS Resource Indicator (default). Use Production WorkOS keys for real
-   clients; staging is fine for the demo.
 7. **Dashboard sign-in** (optional; the plan allows cutting it). A WorkOS OAuth app with redirect
    `PUBLIC_URL/auth/callback` → `DASHBOARD_CLIENT_ID/SECRET`. Without it the dashboard only works with `AUTH_MODE=dev`.
 8. **Video and launch.** Follow `docs/DEMO-SCRIPT.md`, fill `docs/CASE-STUDY.md` (Groq numbers, or rerun with Claude),
