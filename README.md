@@ -9,7 +9,7 @@ All data is fictional: the demo firm is _Northbridge Advisory_ with 3 staff, 12 
 
 ## Demo
 
-- **Video:** [2½-minute walkthrough](https://youtu.be/hFSXsezX2ac): Claude, signed in as an assistant, answers with
+- **Video:** [2-minute walkthrough](https://youtu.be/hFSXsezX2ac): Claude, signed in as an assistant, answers with
   citations, files an invoice, sends a blurry scan to review and is refused a client it isn't assigned to; then the
   partner's dashboard shows the audit trail, the review queue and the accuracy report.
 - **Live dashboard:** https://clientdesk-mcp.onrender.com/dashboard (sign-in required; the MCP endpoint is
