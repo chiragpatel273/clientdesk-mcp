@@ -105,7 +105,7 @@ If a phase runs over, cut the HubSpot adapter and the demo login first, never th
   (`DASHBOARD_CLIENT_ID/SECRET`, code + PKCE, ID token checked). Partners resolve reviews; assistants see only their own
   audit rows, without details.
 - **Day 8 (files ready):** `Dockerfile` (built and smoke-tested), `render.yaml`, `docs/DEMO-SCRIPT.md`,
-  `docs/CASE-STUDY.md` (with `[[…]]` slots for the Claude numbers and URLs).
+  `docs/CASE-STUDY.md` (slots filled 2026-11-17 with the Groq numbers, video and live URLs).
 - **2026-11-09 to 11-17 (owner steps 1–5):** `.env` is now loaded by every entry point (`loadDotEnv()`; real env
   wins). Groq extractor (`src/ai/groq-extractor.ts`: `openai/gpt-oss-20b`, escalating to `gpt-oss-120b`, strict JSON
   schema, waits out 429s; text only, so scans go to review); the prompt is shared with Claude in
