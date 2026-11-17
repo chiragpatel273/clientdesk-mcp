@@ -54,4 +54,15 @@ describe('HTTP transport (Streamable HTTP, stateless)', () => {
   it('refuses dev auth in production', () => {
     expect(() => loadConfig({ NODE_ENV: 'production', AUTH_MODE: 'dev' })).toThrow(/not allowed in production/);
   });
+
+  it('treats blank settings as not set', () => {
+    const config = loadConfig({
+      NODE_ENV: 'test',
+      AUTH_MODE: 'dev',
+      ANTHROPIC_API_KEY: '',
+      OAUTH_AUDIENCE: '',
+      PORT: '',
+    });
+    expect(config).toMatchObject({ extractor: 'rules', anthropicApiKey: undefined, port: 3000 });
+  });
 });

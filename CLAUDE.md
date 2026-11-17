@@ -24,8 +24,8 @@ and the exact next steps. Update its Status and Next up sections when a day's wo
   `resolve-client.ts` (id or name → one visible client) and `document-access.ts` (who may see a document) are shared.
 - `src/domain/*` plain functions over `Db`: access, clients, documents (ingest, chunk, reindex), intake (extract once,
   match), matching (scores + reasons + file/review decision), search (hybrid), open items, dashboard queries. No MCP types.
-- `src/ai/` extraction (Claude: Haiku then Opus on low confidence; `rules` offline fallback) and embeddings (Voyage;
-  `local` hashing fallback). `src/storage/` files (local, R2, memory). `src/documents/` pdf.js text, signed links.
+- `src/ai/` extraction (Claude: Haiku then Opus on low confidence; Groq: gpt-oss-20b then 120b; `rules` offline fallback) and embeddings (Voyage;
+  `local` hashing fallback). `src/storage/` files (local, S3/R2, memory). `src/documents/` pdf.js text, signed links.
 - `src/services.ts` builds `AppServices` (files, embedder, extractor, links, filing thresholds) from config; tests use
   `testServices()` (offline, in-memory).
 - `src/db/` `Db` interface with PGlite (local, tests) and `pg` (production). SQL is plain Postgres; migrations in `migrations/*.sql`.
