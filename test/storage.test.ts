@@ -90,6 +90,18 @@ describe('storage config', () => {
     expect(config.storage).toMatchObject({ kind: 's3', provider: 'S3', endpoint: undefined, region: 'us-west-2' });
   });
 
+  it('trims stray spaces from pasted values', () => {
+    const config = loadConfig({
+      ...base,
+      STORAGE: 's3',
+      S3_BUCKET: 'b ',
+      S3_REGION: ' ap-southeast-2',
+      AWS_ACCESS_KEY_ID: 'k',
+      AWS_SECRET_ACCESS_KEY: 's',
+    });
+    expect(config.storage).toMatchObject({ bucket: 'b', region: 'ap-southeast-2' });
+  });
+
   it('keeps R2 working as an S3-compatible endpoint', () => {
     const config = loadConfig({
       ...base,

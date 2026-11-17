@@ -148,8 +148,12 @@ export function loadDotEnv(path = '.env'): void {
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
-  // A blank value (`KEY=` in .env, an empty field in a hosting dashboard) means "not set", not an invalid value.
-  const parsed = EnvSchema.parse(Object.fromEntries(Object.entries(env).filter(([, value]) => value !== '')));
+  // Values pasted into .env or a hosting dashboard often carry stray spaces: trim them. A blank value then means
+  // "not set", not an invalid one.
+  const cleaned = Object.entries(env)
+    .map(([key, value]) => [key, value?.trim()] as const)
+    .filter(([, value]) => value !== undefined && value !== '');
+  const parsed = EnvSchema.parse(Object.fromEntries(cleaned));
   const publicUrl = parsed.PUBLIC_URL ? new URL(parsed.PUBLIC_URL) : undefined;
   const production = parsed.NODE_ENV === 'production';
 
