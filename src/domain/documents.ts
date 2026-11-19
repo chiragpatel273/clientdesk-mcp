@@ -6,7 +6,8 @@ import { extractText } from '../documents/text.js';
 import type { AppServices } from '../services.js';
 import type { MatchResult } from './matching.js';
 
-export type DocumentStatus = 'inbox' | 'filed' | 'review';
+/** `processing`: a background intake job owns it (not in the inbox yet). */
+export type DocumentStatus = 'processing' | 'inbox' | 'filed' | 'review';
 
 export interface DocumentRecord {
   id: string;
@@ -136,6 +137,11 @@ export interface IngestInput {
   receivedAt?: string;
   /** An extraction already made for these bytes (the eval, re-ingests): stored, and used for the passage context. */
   extraction?: Extraction;
+  /**
+   * Batch intake: only store the file and record the document as `processing`. A background job then reads the
+   * text, indexes, extracts, matches and files it, one step at a time.
+   */
+  deferProcessing?: boolean;
 }
 
 function titleFromFilename(filename: string | null): string {
@@ -168,7 +174,9 @@ export async function ingestDocument(
   if (existing) return { id: existing.id, duplicate: true };
 
   const id = input.id ?? `doc_${randomBytes(6).toString('hex')}`;
-  const { pages, textLayer } = await extractText(input.bytes, input.mimeType);
+  const { pages, textLayer } = input.deferProcessing
+    ? { pages: [] as string[], textLayer: true }
+    : await extractText(input.bytes, input.mimeType);
   const storageKey = `documents/${id}/${sha.slice(0, 16)}.${ext}`;
   await services.files.put(storageKey, input.bytes, input.mimeType);
 
@@ -185,7 +193,7 @@ export async function ingestDocument(
       input.filed?.taxYear ?? null,
       input.filed?.docType ?? null,
       input.title ?? titleFromFilename(input.filename),
-      input.filed ? 'filed' : 'inbox',
+      input.filed ? 'filed' : input.deferProcessing ? 'processing' : 'inbox',
       storageKey,
       pages.length,
       input.receivedAt ?? null,
@@ -199,8 +207,24 @@ export async function ingestDocument(
       input.extraction ? JSON.stringify(input.extraction) : null,
     ],
   );
-  await reindexDocument(db, services.embedder, id);
+  if (!input.deferProcessing) await reindexDocument(db, services.embedder, id);
   return { id, duplicate: false };
+}
+
+/** Background intake, first step: read the stored file's text layer into the document. Safe to run twice. */
+export async function readStoredText(db: Db, files: AppServices['files'], id: string): Promise<{ pages: number }> {
+  const doc = await getDocument(db, id);
+  if (!doc?.storageKey || !doc.mimeType) throw new Error('Document or stored file missing');
+  const bytes = await files.get(doc.storageKey);
+  if (!bytes) throw new Error('Stored file not found');
+  const { pages, textLayer } = await extractText(bytes, doc.mimeType);
+  await db.query('update documents set page_text = $2::jsonb, page_count = $3, text_layer = $4 where id = $1', [
+    id,
+    JSON.stringify(pages),
+    pages.length,
+    textLayer,
+  ]);
+  return { pages: pages.length };
 }
 
 /** Bump when `passageContext` changes: start-up then rebuilds older passages (`reindexStale`). */
@@ -383,25 +407,42 @@ export async function saveMatch(db: Db, id: string, match: MatchResult): Promise
   await db.query('update documents set match = $2::jsonb where id = $1', [id, JSON.stringify(match)]);
 }
 
-/** Files a document. Callers have already checked access and the match; this only records the result. */
+/**
+ * Files a document. Callers have already checked access and the match; this only records the result. `from`: the
+ * statuses it may be filed from (a background job files from `processing`; people from the inbox or review queue).
+ */
 export async function markFiled(
   db: Db,
   input: { id: string; clientId: string; taxYear: number | null; docType: string | null; staffId: string },
+  from: DocumentStatus[] = ['inbox', 'review'],
 ): Promise<boolean> {
   const rows = await db.query<{ id: string }>(
     `update documents
      set client_id = $2, tax_year = $3, doc_type = $4, status = 'filed', filed_at = now(), filed_by = $5, review_reason = null
-     where id = $1 and status in ('inbox', 'review') returning id`,
-    [input.id, input.clientId, input.taxYear, input.docType, input.staffId],
+     where id = $1 and status = any($6::text[]) returning id`,
+    [input.id, input.clientId, input.taxYear, input.docType, input.staffId, from],
   );
   return rows.length === 1;
 }
 
-export async function markForReview(db: Db, input: { id: string; reason: string; staffId: string }): Promise<boolean> {
+export async function markForReview(
+  db: Db,
+  input: { id: string; reason: string; staffId: string },
+  from: DocumentStatus[] = ['inbox'],
+): Promise<boolean> {
   const rows = await db.query<{ id: string }>(
     `update documents set status = 'review', review_reason = $2, sent_to_review_by = $3, sent_to_review_at = now()
-     where id = $1 and status = 'inbox' returning id`,
-    [input.id, input.reason, input.staffId],
+     where id = $1 and status = any($4::text[]) returning id`,
+    [input.id, input.reason, input.staffId, from],
+  );
+  return rows.length === 1;
+}
+
+/** Moves a document between the background job and the inbox (a dead job hands it to people; a retry takes it back). */
+export async function setProcessing(db: Db, id: string, processing: boolean): Promise<boolean> {
+  const rows = await db.query<{ id: string }>(
+    `update documents set status = $2 where id = $1 and status = $3 returning id`,
+    [id, processing ? 'processing' : 'inbox', processing ? 'inbox' : 'processing'],
   );
   return rows.length === 1;
 }
@@ -410,7 +451,7 @@ export async function documentCounts(db: Db): Promise<Record<DocumentStatus, num
   const rows = await db.query<{ status: DocumentStatus; n: number }>(
     'select status, count(*)::int as n from documents group by status',
   );
-  const counts: Record<DocumentStatus, number> = { inbox: 0, review: 0, filed: 0 };
+  const counts: Record<DocumentStatus, number> = { processing: 0, inbox: 0, review: 0, filed: 0 };
   for (const r of rows) counts[r.status] = Number(r.n);
   return counts;
 }

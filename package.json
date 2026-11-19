@@ -10,6 +10,7 @@
     "stdio": "tsx src/stdio.ts",
     "seed": "tsx scripts/seed.ts",
     "reindex": "tsx scripts/reindex.ts",
+    "worker": "tsx scripts/worker.ts",
     "eval": "tsx scripts/eval.ts",
     "eval:claude": "tsx scripts/eval.ts --extractor=claude",
     "workos:users": "tsx scripts/workos-users.ts",

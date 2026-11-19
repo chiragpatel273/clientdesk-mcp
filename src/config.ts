@@ -83,6 +83,20 @@ const EnvSchema = z.object({
   R2_SECRET_ACCESS_KEY: z.string().min(1).optional(),
   R2_BUCKET: z.string().min(1).optional(),
 
+  /** Run the background job worker in this process (batch intake). `npm run worker` runs it on its own. */
+  WORKER: z
+    .enum(['0', '1'])
+    .default('1')
+    .transform((v) => v === '1'),
+  /** Jobs one worker process runs at the same time. */
+  WORKER_CONCURRENCY: z.coerce.number().int().min(1).max(16).default(2),
+  /** Tries per job step before the job is dead-lettered. */
+  JOB_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(20).default(5),
+  /** First retry waits this long; each further retry doubles it (capped at 10 minutes). */
+  JOB_BACKOFF_MS: z.coerce.number().int().min(0).default(2000),
+  /** A running job not finished after this long is treated as stuck (its worker died) and taken again. */
+  JOB_STUCK_SECONDS: z.coerce.number().int().min(10).default(300),
+
   /** A document is filed automatically only when the best client scores at least this... */
   FILE_THRESHOLD: z.coerce.number().min(0.5).max(1).default(0.85),
   /** ...and beats the runner-up by at least this much. Otherwise it goes to human review. */
@@ -134,6 +148,15 @@ export type Config = {
   voyageApiKey: string | undefined;
   storage: { kind: 'local'; dir: string } | ({ kind: 's3' } & S3Config);
   filing: { threshold: number; margin: number };
+  jobs: JobsConfig;
+};
+
+export type JobsConfig = {
+  worker: boolean;
+  concurrency: number;
+  maxAttempts: number;
+  backoffMs: number;
+  stuckSeconds: number;
 };
 
 /** The MCP endpoint's URL: the OAuth protected resource identifier. */
@@ -267,5 +290,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     voyageApiKey: parsed.VOYAGE_API_KEY,
     storage,
     filing: { threshold: parsed.FILE_THRESHOLD, margin: parsed.FILE_MARGIN },
+    jobs: {
+      worker: parsed.WORKER,
+      concurrency: parsed.WORKER_CONCURRENCY,
+      maxAttempts: parsed.JOB_MAX_ATTEMPTS,
+      backoffMs: parsed.JOB_BACKOFF_MS,
+      stuckSeconds: parsed.JOB_STUCK_SECONDS,
+    },
   };
 }

@@ -96,6 +96,37 @@ export interface InboxItem {
   pageCount: number | null;
 }
 
+export type JobStep = 'stored' | 'text_extracted' | 'embedded' | 'fields_extracted' | 'matched' | 'filed' | 'review';
+export type JobStatus = 'queued' | 'running' | 'done' | 'dead';
+
+export interface JobItem {
+  jobId: number;
+  documentId: string;
+  title: string;
+  filename: string | null;
+  step: JobStep;
+  status: JobStatus;
+  attempts: number;
+  maxAttempts: number;
+  lastError: string | null;
+  nextTryAt: string | null;
+  updatedAt: string;
+  outcome: { kind: 'filed'; clientName: string } | { kind: 'review'; reason: string | null } | null;
+}
+
+export interface Batch {
+  id: string;
+  createdAt: string;
+  total: number;
+  items: JobItem[];
+}
+
+export interface BatchFileResult {
+  documentId: string;
+  jobId: number | null;
+  duplicate: boolean;
+}
+
 export interface UploadResult {
   id: string;
   title: string;
@@ -298,6 +329,19 @@ export const api = {
       body: file,
       headers: { 'content-type': contentType, 'x-filename': headerSafeFilename(file.name) },
     }),
+  createBatch: (total: number) =>
+    request<{ id: string }>('POST', '/api/batches', {
+      body: JSON.stringify({ total }),
+      headers: { 'content-type': 'application/json' },
+    }),
+  uploadToBatch: (batchId: string, file: File, contentType: 'application/pdf' | 'text/plain', key: string) =>
+    request<BatchFileResult>('POST', `/api/batches/${encodeURIComponent(batchId)}/files`, {
+      body: file,
+      headers: { 'content-type': contentType, 'x-filename': headerSafeFilename(file.name), 'idempotency-key': key },
+    }),
+  batch: (id: string) => request<Batch>('GET', `/api/batches/${encodeURIComponent(id)}`),
+  deadJobs: () => request<{ items: JobItem[] }>('GET', '/api/jobs?status=dead'),
+  retryJob: (id: number) => request<{ ok: true }>('POST', `/api/jobs/${id}/retry`),
   accuracy: (run: AccuracyRun = 'report') =>
     request<AccuracyReport>('GET', `/api/accuracy${run === 'baseline' ? '?run=baseline' : ''}`),
   logout: () => request<unknown>('POST', '/auth/logout'),

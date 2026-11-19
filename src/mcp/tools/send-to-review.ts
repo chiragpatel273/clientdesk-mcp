@@ -40,6 +40,11 @@ export function registerSendToReview(server: McpServer, ctx: ToolContext): void 
             const message = 'This document is already in the review queue.';
             return { outcome: 'ok', text: message, structured: { status: 'already_in_review', message } };
           }
+          if (doc.status === 'processing') {
+            const message =
+              'Batch intake is processing this document; it will be filed or sent to review automatically.';
+            return { outcome: 'ok', text: message, structured: { status: 'not_allowed', message } };
+          }
           if (doc.status === 'filed') {
             const message = 'Filed documents can’t be sent to review.';
             return { outcome: 'ok', text: message, structured: { status: 'not_allowed', message } };

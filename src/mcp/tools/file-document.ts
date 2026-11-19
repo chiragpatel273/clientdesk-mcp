@@ -75,7 +75,9 @@ export function registerFileDocument(server: McpServer, ctx: ToolContext): void 
             const message =
               doc.status === 'review'
                 ? 'This document is in the review queue; a partner resolves it from the dashboard.'
-                : 'This document is already filed.';
+                : doc.status === 'processing'
+                  ? 'Batch intake is processing this document; it will be filed or sent to review automatically.'
+                  : 'This document is already filed.';
             return {
               outcome: 'ok',
               text: message,

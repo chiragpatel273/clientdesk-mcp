@@ -11,6 +11,7 @@ import {
   documentCounts,
   getDocument,
   ingestDocument,
+  setProcessing,
   listDocumentsByStatus,
   markFiled,
   retitleAndReindex,
@@ -23,6 +24,7 @@ import { findActorByEmail, findActorById } from '../domain/staff.js';
 import type { Actor } from '../domain/types.js';
 import { ensureMatch } from '../domain/intake.js';
 import { canSeeDocument } from '../mcp/document-access.js';
+import { createBatch, enqueue, findJobByKey, getBatch, getJob, listJobs, retryDead } from '../jobs/queue.js';
 import type { AppServices } from '../services.js';
 import { readSession } from './session.js';
 
@@ -68,6 +70,9 @@ export async function sendDocumentFile(res: Response, services: AppServices, doc
 function writeActionName(path: string): string {
   if (/^\/review\/[^/]+\/resolve$/.test(path)) return 'resolve_review';
   if (path === '/documents') return 'upload';
+  if (path === '/batches') return 'create_batch';
+  if (/^\/batches\/[^/]+\/files$/.test(path)) return 'batch_upload';
+  if (/^\/jobs\/[^/]+\/retry$/.test(path)) return 'retry_job';
   return 'write';
 }
 
@@ -278,6 +283,137 @@ export function createApiRouter(deps: Deps): Router {
       }
     },
   );
+
+  // ---------- batch intake (partners only) ----------
+
+  const partnersOnly = async (req: Request, res: Response, action: string, input: unknown): Promise<boolean> => {
+    const actor = req.staff!;
+    if (actor.role === 'partner') return true;
+    await audit(actor, `dashboard:${action}`, input, 'denied', 'partners only');
+    error(res, 403, 'Only partners can use batch intake');
+    return false;
+  };
+
+  router.post('/batches', express.json({ limit: '1kb' }), async (req, res) => {
+    const total = Number(req.body?.total);
+    if (!(await partnersOnly(req, res, 'create_batch', { total }))) return;
+    if (!Number.isInteger(total) || total < 1 || total > 25) return error(res, 400, 'A batch holds 1 to 25 files');
+    const id = await createBatch(db, req.staff!.staffId, total);
+    await audit(req.staff!, 'dashboard:create_batch', { total }, 'ok', id);
+    return res.json({ id });
+  });
+
+  router.post(
+    '/batches/:id/files',
+    express.raw({ type: Object.keys(SUPPORTED_TYPES), limit: MAX_UPLOAD_BYTES }),
+    async (req, res) => {
+      const actor = req.staff!;
+      const batchId = String(req.params.id);
+      const filename = String(req.header('x-filename') ?? '')
+        .replace(/[^\w.\- ]+/g, '_')
+        .slice(0, 120);
+      const input = { batchId, filename };
+      if (!(await partnersOnly(req, res, 'batch_upload', input))) return;
+      const batch = await getBatch(db, batchId);
+      if (!batch || batch.createdBy !== actor.staffId) return error(res, 404, 'No such batch');
+      const mimeType = String(req.headers['content-type'] ?? '')
+        .split(';')[0]!
+        .trim();
+      if (!SUPPORTED_TYPES[mimeType] || !Buffer.isBuffer(req.body) || req.body.length === 0) {
+        return error(res, 415, 'Upload a PDF or a .txt file');
+      }
+      // The same Idempotency-Key from the same person in the same batch returns the first result: a retried
+      // request never processes a document twice.
+      const rawKey = req.header('idempotency-key');
+      const key = rawKey && /^[\w-]{8,100}$/.test(rawKey) ? `${actor.staffId}:${batchId}:${rawKey}` : null;
+      if (rawKey && !key) return error(res, 400, 'Idempotency-Key must be 8 to 100 letters, digits, - or _');
+      const [{ n } = { n: 0 }] = await db.query<{ n: number }>(
+        'select count(*)::int as n from jobs where batch_id = $1',
+        [batchId],
+      );
+      try {
+        const existing = key ? await findJobByKey(db, key) : null;
+        if (existing) return res.json({ documentId: existing.documentId, jobId: existing.id, duplicate: false });
+        if (Number(n) >= batch.total) return error(res, 409, 'This batch already has all its files');
+        const result = await ingestDocument(db, services, {
+          bytes: new Uint8Array(req.body),
+          mimeType,
+          filename: filename || null,
+          uploadedBy: actor.staffId,
+          deferProcessing: true,
+        });
+        if (result.duplicate) {
+          await audit(actor, 'dashboard:batch_upload', input, 'ok', `duplicate of ${result.id}`);
+          return res.json({ documentId: result.id, jobId: null, duplicate: true });
+        }
+        const { job } = await enqueue(
+          db,
+          { documentId: result.id, createdBy: actor.staffId, batchId, idempotencyKey: key },
+          config.jobs,
+        );
+        await audit(actor, 'dashboard:batch_upload', input, 'ok', `${result.id} job ${job.id}`);
+        return res.json({ documentId: result.id, jobId: job.id, duplicate: false });
+      } catch (err) {
+        await audit(actor, 'dashboard:batch_upload', input, 'error', err instanceof Error ? err.message : String(err));
+        return error(res, 400, 'Could not store that file');
+      }
+    },
+  );
+
+  const jobView = async (jobs: Awaited<ReturnType<typeof listJobs>>) => {
+    const docs = await Promise.all(jobs.map((j) => getDocument(db, j.documentId)));
+    return jobs.map((j, i) => {
+      const d = docs[i];
+      return {
+        jobId: j.id,
+        documentId: j.documentId,
+        title: d?.title ?? j.documentId,
+        filename: d?.sourceFilename ?? null,
+        step: j.step,
+        status: j.status,
+        attempts: j.attempts,
+        maxAttempts: j.maxAttempts,
+        lastError: j.lastError,
+        nextTryAt: j.status === 'queued' && j.attempts > 0 ? j.runAt : null,
+        updatedAt: j.updatedAt,
+        outcome:
+          j.step === 'filed' && d?.clientName
+            ? { kind: 'filed' as const, clientName: d.clientName }
+            : j.step === 'review'
+              ? { kind: 'review' as const, reason: d?.reviewReason ?? null }
+              : null,
+      };
+    });
+  };
+
+  router.get('/batches/:id', async (req, res) => {
+    const batchId = String(req.params.id);
+    if (!(await partnersOnly(req, res, 'view_batch', { batchId }))) return;
+    const batch = await getBatch(db, batchId);
+    if (!batch) return error(res, 404, 'No such batch');
+    const jobs = (await listJobs(db, { batchId, limit: 100 })).reverse();
+    return res.json({ ...batch, items: await jobView(jobs) });
+  });
+
+  router.get('/jobs', async (req, res) => {
+    if (!(await partnersOnly(req, res, 'view_jobs', {}))) return;
+    const status = req.query.status === 'dead' ? 'dead' : undefined;
+    return res.json({ items: await jobView(await listJobs(db, { status, limit: 50 })) });
+  });
+
+  router.post('/jobs/:id/retry', async (req, res) => {
+    const jobId = Number(req.params.id);
+    if (!(await partnersOnly(req, res, 'retry_job', { jobId }))) return;
+    const job = Number.isInteger(jobId) ? await getJob(db, jobId) : null;
+    if (!job || job.status !== 'dead') return error(res, 404, 'No dead job with that id');
+    // Only while the document is still waiting in the inbox: if someone filed it by hand meanwhile, leave it.
+    if (!(await setProcessing(db, job.documentId, true))) {
+      return error(res, 409, 'The document has been handled since; nothing to retry');
+    }
+    await retryDead(db, job.id);
+    await audit(req.staff!, 'dashboard:retry_job', { jobId }, 'ok', job.documentId);
+    return res.json({ ok: true });
+  });
 
   router.get('/documents/:id/file', async (req, res) => {
     const actor = req.staff!;

@@ -92,7 +92,7 @@ Build order: 1 → 2 → 3 → 5 → 6 → 4. Every phase must pass `npm run che
 | --- | ------------------------ | -------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- | ------ |
 | 1   | Try the demo             | No login wall: a read-only demo session, enforced on the server      | Fresh browser → "Try the demo" → Overview, Inbox, Review, Audit, Accuracy; every write refused (403) and audited           | Done   |
 | 2   | Search and citation miss | Right page wins; Voyage documented as the production embedder        | Offline citation ≥ 95%, 0 wrong-client filings, no metric worse (or the best honest result, explained)                     | Done   |
-| 3   | Batch intake + job queue | Upload many documents; a Postgres job queue processes them           | 10 uploads process in the background with visible progress; a forced failure retries, then dead-letters; worker tests      | Todo   |
+| 3   | Batch intake + job queue | Upload many documents; a Postgres job queue processes them           | 10 uploads process in the background with visible progress; a forced failure retries, then dead-letters; worker tests      | Done   |
 | 5   | Playwright E2E           | The main journeys tested in a real browser, in CI                    | `npx playwright test` passes locally in under ~3 minutes                                                                   | Todo   |
 | 6   | LLM usage and cost       | Every model call recorded (tokens, cost, latency); a Usage page      | An eval run and a batch upload both show on the Usage page; recording tested                                               | Todo   |
 | 4   | Multiple firms           | `firm_id` everywhere, isolation in the domain layer and Postgres RLS | All tests, E2E and eval pass; cross-firm reads, writes, search, links and filings denied and audited, even with forged ids | Todo   |
@@ -138,6 +138,35 @@ Build order: 1 → 2 → 3 → 5 → 6 → 4. Every phase must pass `npm run che
 - Risks: start-up reindexing blocks start for large databases (13 documents here: instant; Phase 3's job queue is
   the place to move it); the Groq numbers stay pre-v2 until the owner reruns it.
 
+**Phase 3: Batch intake with a background job queue.**
+
+- Schema: migration `005_jobs.sql`: `batches` (who uploaded how many) and `jobs` (one row per document: `step`,
+  `status` queued/running/done/dead, `attempts`/`max_attempts`, `run_at` for backoff, `locked_at`/`locked_by`,
+  `last_error`, unique `idempotency_key`). Documents get a `processing` status so a half-processed document is
+  invisible to `list_inbox`/`file_document` (no race with Claude filing it by hand).
+- Queue (`src/jobs/queue.ts`): claim with one `UPDATE … WHERE id = (SELECT … FOR UPDATE SKIP LOCKED LIMIT 1)`,
+  so several workers (or instances) never take the same job; attempts are counted at claim time, so a job whose
+  worker died (`locked_at` older than the stuck timeout) is reclaimed and still runs out of attempts. Failure:
+  exponential backoff (`run_at`), then `dead` after `max_attempts` (dead-letter), retryable by a partner.
+- Pipeline (`src/jobs/intake.ts`), one step per claim, each step idempotent and audited as `job:<step>` for the
+  uploader: stored (at upload) → text_extracted → embedded → fields_extracted → matched → filed | review. Filing uses
+  the same `matchClients` rule (0.85, 15 points clear, look-alikes need a second identifier) and re-checks the
+  uploader's access to the client at the filing step. A dead job puts the document back in the inbox, so the manual
+  path (Claude) still works.
+- Worker (`src/jobs/worker.ts`) runs in the web process (`WORKER=1`, `WORKER_CONCURRENCY=2`): Render's free plan
+  has no background workers; the same code runs as a separate process with `npm run worker`.
+- API (partners only, read-only refused): `POST /api/batches`, `POST /api/batches/:id/files` (raw body,
+  `Idempotency-Key`), `GET /api/batches/:id` (per-document progress), `GET /api/jobs?status=dead`,
+  `POST /api/jobs/:id/retry`. Dashboard: a "Batch intake" card on the Inbox page with per-document progress.
+- **Why Postgres and not BullMQ/Redis:** the queue lives in the database the app already has (Neon), so there is
+  no second service to run, pay for, secure or back up; enqueueing can share a transaction-free single statement
+  with the document insert; `SKIP LOCKED` gives the same at-most-one-worker-per-job guarantee; jobs are queryable
+  with SQL for the dashboard and the audit trail; and tests run it in PGlite. Redis wins at thousands of jobs a
+  second or with delayed-job fan-out; intake here is tens of documents an hour.
+- Risks: polling (default every second) costs a cheap indexed query per worker; LISTEN/NOTIFY would cut it but
+  doesn't exist in PGlite. A step that succeeds but crashes before recording it runs again: every step is
+  idempotent (rebuild chunks, cached extraction, guarded status updates).
+
 ### Decisions made on the owner's behalf
 
 (Each with its reason. Newest last.)
@@ -163,6 +192,15 @@ Build order: 1 → 2 → 3 → 5 → 6 → 4. Every phase must pass `npm run che
 8. **Offline eval output moved to `eval/baseline.*`**, so the spec'd `npm run eval -- --extractor=rules --check`
    no longer overwrites the published model report.
 9. **Startup reindexing instead of a manual step**: the owner can't reach Neon's port 5432 from their network.
+10. **Batch intake files automatically** when the match rule says `file` (the rule `file_document` enforces), because
+    the phase asks for "filed or sent to review". Through Claude a person still confirms each filing; in a batch the
+    partner who uploads it has chosen automatic filing, and every filing gets a CRM note and audit rows.
+11. **The single-file upload stays for every staff member** (Claude files those, with confirmation); batch intake is
+    partners only, as specified.
+12. **A dead job hands its document back to the inbox** rather than leaving it stuck in `processing`, so a person (or
+    Claude) can still deal with it; a partner's retry takes it back only if nobody has handled it meanwhile.
+13. **The worker runs inside the web process** on Render (no paid background worker needed); `npm run worker` exists
+    for running it separately.
 
 ### Blocked / needs owner
 
