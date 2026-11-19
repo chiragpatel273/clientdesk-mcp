@@ -1,6 +1,6 @@
 # ClientDesk accuracy report
 
-Generated 2026-11-19T18:00:57.506Z · extractor **rules-v1 (offline baseline)** · embeddings **local-hash-v1** · filing threshold 0.85, margin 0.15
+Generated 2026-11-19T18:19:11.494Z · extractor **rules-v1 (offline baseline)** · embeddings **local-hash-v1** · filing threshold 0.85, margin 0.15
 
 60 labelled documents (15 per type) and 30 questions with known source pages. All data is synthetic. Regenerate with `npm run eval -- --extractor=rules`.
 
@@ -47,6 +47,10 @@ Decisions: 45 filed correctly, 0 filed to the wrong client, 2 sent to review as 
 ## Search misses
 
 None.
+
+## Model usage
+
+221 model calls, 15,590 input and 6,494 output tokens, estimated cost $0.0000. Offline models: token counts are estimates (characters / 4), cost 0.
 
 ## Robustness check (not a target)
 

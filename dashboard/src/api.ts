@@ -162,6 +162,47 @@ export interface AccuracyCase {
   fieldErrors: string[];
 }
 
+export interface UsageModelRow {
+  operation: string;
+  provider: string;
+  model: string;
+  calls: number;
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number;
+  avgLatencyMs: number;
+  errors: number;
+}
+
+export interface EvalUsage {
+  calls: number;
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number;
+  escalated: number;
+  errors: number;
+}
+
+export interface Usage {
+  days: number;
+  totals: {
+    calls: number;
+    inputTokens: number;
+    outputTokens: number;
+    costUsd: number;
+    avgLatencyMs: number;
+    escalationRate: number;
+    errorRate: number;
+    filedDocuments: number;
+    costPerFiledDocument: number | null;
+    estimatedTokenShare: number;
+  };
+  byDay: { day: string; calls: number; tokens: number; costUsd: number }[];
+  byModel: UsageModelRow[];
+  bySource: { source: string; calls: number; costUsd: number }[];
+  evalRuns: { run: 'report' | 'baseline'; generatedAt?: string; extractor?: string; usage: EvalUsage | null }[];
+}
+
 /** `report`: the latest model run. `baseline`: the offline rules run from CI. */
 export type AccuracyRun = 'report' | 'baseline';
 
@@ -342,6 +383,7 @@ export const api = {
   batch: (id: string) => request<Batch>('GET', `/api/batches/${encodeURIComponent(id)}`),
   deadJobs: () => request<{ items: JobItem[] }>('GET', '/api/jobs?status=dead'),
   retryJob: (id: number) => request<{ ok: true }>('POST', `/api/jobs/${id}/retry`),
+  usage: (days: number) => request<Usage>('GET', `/api/usage?days=${days}`),
   accuracy: (run: AccuracyRun = 'report') =>
     request<AccuracyReport>('GET', `/api/accuracy${run === 'baseline' ? '?run=baseline' : ''}`),
   logout: () => request<unknown>('POST', '/auth/logout'),

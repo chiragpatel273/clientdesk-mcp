@@ -1,3 +1,4 @@
+import { usageScope } from './ai/usage.js';
 import type { Config } from './config.js';
 import { createDb, type Db } from './db/index.js';
 import { migrate } from './db/migrate.js';
@@ -15,8 +16,9 @@ export async function openDatabase(
   const db = await createDb(config.databaseUrl);
   const ran = await migrate(db);
   if (ran.length) log(`Applied migrations: ${ran.join(', ')}`);
-  if (config.seedDemo) await seedDemo(db, log, services);
-  const reindexed = await reindexStale(db, services.embedder, { log });
+  // Embedding demo documents and rebuilding passages are model calls too: recorded as start-up work.
+  if (config.seedDemo) await usageScope({ db, source: 'startup' }, () => seedDemo(db, log, services));
+  const reindexed = await usageScope({ db, source: 'startup' }, () => reindexStale(db, services.embedder, { log }));
   if (reindexed) log(`Rebuilt search passages for ${reindexed} documents (embeddings: ${services.embedder.model}).`);
   return db;
 }

@@ -1,4 +1,5 @@
 import { inferTaxYear } from '../ai/extraction.js';
+import { usageScope } from '../ai/usage.js';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import express, { type NextFunction, type Request, type Response, Router } from 'express';
@@ -20,6 +21,7 @@ import {
   type DocumentRecord,
 } from '../domain/documents.js';
 import { addNote } from '../domain/open-items.js';
+import { usageSummary } from '../domain/usage.js';
 import { findActorByEmail, findActorById } from '../domain/staff.js';
 import type { Actor } from '../domain/types.js';
 import { ensureMatch } from '../domain/intake.js';
@@ -121,6 +123,11 @@ export function createApiRouter(deps: Deps): Router {
       return next(err);
     }
   });
+
+  // Model calls a dashboard request makes (embedding an upload, extracting to decide who may view a file) are
+  // recorded as this staff member's.
+  const scoped = <T>(req: Request, fn: () => Promise<T>, documentId?: string) =>
+    usageScope({ db, staffId: req.staff!.staffId, source: 'dashboard', documentId }, fn);
 
   const audit = (actor: Actor, tool: string, input: unknown, outcome: 'ok' | 'denied' | 'error', detail?: string) =>
     recordAudit(db, { staffId: actor.staffId, tool, input, outcome, detail, durationMs: 0 });
@@ -242,7 +249,7 @@ export function createApiRouter(deps: Deps): Router {
     if (!(await markFiled(db, { id: doc.id, clientId: input.clientId, taxYear, docType, staffId: actor.staffId }))) {
       return error(res, 409, 'The document changed; reload the queue');
     }
-    await retitleAndReindex(db, services.embedder, doc.id, doc.extraction);
+    await scoped(req, () => retitleAndReindex(db, services.embedder, doc.id, doc.extraction), doc.id);
     await addNote(db, {
       clientId: input.clientId,
       authorId: actor.staffId,
@@ -268,12 +275,14 @@ export function createApiRouter(deps: Deps): Router {
         .replace(/[^\w.\- ]+/g, '_')
         .slice(0, 120);
       try {
-        const result = await ingestDocument(db, services, {
-          bytes: new Uint8Array(req.body),
-          mimeType,
-          filename: filename || null,
-          uploadedBy: actor.staffId,
-        });
+        const result = await scoped(req, () =>
+          ingestDocument(db, services, {
+            bytes: new Uint8Array(req.body),
+            mimeType,
+            filename: filename || null,
+            uploadedBy: actor.staffId,
+          }),
+        );
         const doc = await getDocument(db, result.id);
         await audit(actor, 'dashboard:upload', { filename, bytes: req.body.length }, 'ok', result.id);
         return res.json({ id: result.id, title: doc?.title ?? filename, duplicate: result.duplicate });
@@ -286,11 +295,17 @@ export function createApiRouter(deps: Deps): Router {
 
   // ---------- batch intake (partners only) ----------
 
-  const partnersOnly = async (req: Request, res: Response, action: string, input: unknown): Promise<boolean> => {
+  const partnersOnly = async (
+    req: Request,
+    res: Response,
+    action: string,
+    input: unknown,
+    message = 'Only partners can use batch intake',
+  ): Promise<boolean> => {
     const actor = req.staff!;
     if (actor.role === 'partner') return true;
     await audit(actor, `dashboard:${action}`, input, 'denied', 'partners only');
-    error(res, 403, 'Only partners can use batch intake');
+    error(res, 403, message);
     return false;
   };
 
@@ -419,13 +434,40 @@ export function createApiRouter(deps: Deps): Router {
     const actor = req.staff!;
     const doc = await getDocument(db, String(req.params.id));
     if (!doc) return error(res, 404, 'Not found');
-    const access = await canSeeDocument({ db, actor }, doc, await ensureMatch(db, services, doc));
+    const match = await scoped(req, () => ensureMatch(db, services, doc), doc.id);
+    const access = await canSeeDocument({ db, actor }, doc, match);
     if (!access.allowed) {
       await audit(actor, 'dashboard:view_document', { documentId: doc.id }, 'denied', access.detail);
       return error(res, 403, access.reason);
     }
     await audit(actor, 'dashboard:view_document', { documentId: doc.id }, 'ok');
     return sendDocumentFile(res, services, doc);
+  });
+
+  // LLM usage and estimated cost (partners). Eval runs are separate processes with their own database, so their
+  // usage travels in the accuracy reports and is shown next to it.
+  router.get('/usage', async (req, res) => {
+    const days = Math.min(Math.max(Number(req.query.days) || 14, 1), 90);
+    if (!(await partnersOnly(req, res, 'view_usage', { days }, 'Only partners can see usage and cost'))) return;
+    const evalRuns = [];
+    for (const file of ['report', 'baseline']) {
+      try {
+        const report = JSON.parse(await readFile(join(deps.projectRoot, 'eval', `${file}.json`), 'utf8')) as {
+          generatedAt?: string;
+          extractor?: string;
+          usage?: unknown;
+        };
+        evalRuns.push({
+          run: file,
+          generatedAt: report.generatedAt,
+          extractor: report.extractor,
+          usage: report.usage ?? null,
+        });
+      } catch {
+        // No report of that kind yet.
+      }
+    }
+    return res.json({ ...(await usageSummary(db, days)), evalRuns });
   });
 
   // `report`: the latest model run (Claude or Groq), published. `baseline`: the offline rules run CI makes on every

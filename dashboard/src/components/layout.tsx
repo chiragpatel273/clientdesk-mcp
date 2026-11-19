@@ -1,5 +1,6 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import {
+  Coins,
   FileCheck2,
   Gauge,
   Inbox,
@@ -120,12 +121,20 @@ function SignedInUser() {
   );
 }
 
-const nav: { to: string; label: string; icon: LucideIcon; end?: boolean; count?: 'review' | 'inbox' }[] = [
+const nav: {
+  to: string;
+  label: string;
+  icon: LucideIcon;
+  end?: boolean;
+  count?: 'review' | 'inbox';
+  partnersOnly?: boolean;
+}[] = [
   { to: '/', label: 'Overview', icon: LayoutDashboard, end: true },
   { to: '/audit', label: 'Audit log', icon: ScrollText },
   { to: '/review', label: 'Review queue', icon: FileCheck2, count: 'review' },
   { to: '/inbox', label: 'Inbox', icon: Inbox, count: 'inbox' },
   { to: '/accuracy', label: 'Accuracy', icon: Gauge },
+  { to: '/usage', label: 'Usage', icon: Coins, partnersOnly: true },
 ];
 
 export function Layout() {
@@ -152,32 +161,34 @@ export function Layout() {
         </div>
         <nav aria-label="Main" className="mx-auto max-w-7xl overflow-x-auto px-2 sm:px-4">
           <ul className="flex gap-1">
-            {nav.map((item) => {
-              const count = item.count ? stats.data?.documents[item.count] : undefined;
-              return (
-                <li key={item.to}>
-                  <NavLink
-                    to={item.to}
-                    end={item.end}
-                    className={({ isActive }) =>
-                      cn(
-                        'relative flex h-10 items-center gap-2 px-3 text-sm whitespace-nowrap text-muted-foreground transition-colors hover:text-foreground',
-                        'after:absolute after:inset-x-2 after:-bottom-px after:h-0.5 after:rounded-full',
-                        isActive && 'font-medium text-foreground after:bg-primary',
-                      )
-                    }
-                  >
-                    <item.icon className="size-4" />
-                    {item.label}
-                    {count !== undefined && count > 0 && (
-                      <span className="rounded-full bg-muted px-1.5 text-xs font-medium text-muted-foreground tabular-nums">
-                        {count}
-                      </span>
-                    )}
-                  </NavLink>
-                </li>
-              );
-            })}
+            {nav
+              .filter((item) => !item.partnersOnly || me.role === 'partner')
+              .map((item) => {
+                const count = item.count ? stats.data?.documents[item.count] : undefined;
+                return (
+                  <li key={item.to}>
+                    <NavLink
+                      to={item.to}
+                      end={item.end}
+                      className={({ isActive }) =>
+                        cn(
+                          'relative flex h-10 items-center gap-2 px-3 text-sm whitespace-nowrap text-muted-foreground transition-colors hover:text-foreground',
+                          'after:absolute after:inset-x-2 after:-bottom-px after:h-0.5 after:rounded-full',
+                          isActive && 'font-medium text-foreground after:bg-primary',
+                        )
+                      }
+                    >
+                      <item.icon className="size-4" />
+                      {item.label}
+                      {count !== undefined && count > 0 && (
+                        <span className="rounded-full bg-muted px-1.5 text-xs font-medium text-muted-foreground tabular-nums">
+                          {count}
+                        </span>
+                      )}
+                    </NavLink>
+                  </li>
+                );
+              })}
           </ul>
         </nav>
       </header>

@@ -8,6 +8,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import express, { type Express, type NextFunction, type Request, type RequestHandler, type Response } from 'express';
+import { usageScope } from './ai/usage.js';
 import type { OAuthSetup } from './auth/oauth.js';
 import type { Config } from './config.js';
 import type { Db } from './db/index.js';
@@ -172,7 +173,10 @@ export function createHttpApp(deps: HttpDeps): Express {
       res.status(404).type('text/plain').send('Document not found.');
       return;
     }
-    const access = await canSeeDocument({ db, actor }, doc, await ensureMatch(db, services, doc));
+    const match = await usageScope({ db, staffId: actor.staffId, source: 'mcp', documentId }, () =>
+      ensureMatch(db, services, doc),
+    );
+    const access = await canSeeDocument({ db, actor }, doc, match);
     await recordAudit(db, {
       staffId: actor.staffId,
       tool: 'download_document',

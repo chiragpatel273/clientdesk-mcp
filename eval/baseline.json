@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-19T18:00:57.506Z",
+  "generatedAt": "2026-11-19T18:19:11.494Z",
   "extractor": "rules-v1 (offline baseline)",
   "embedder": "local-hash-v1",
   "thresholds": {
@@ -1076,6 +1076,34 @@
       "top": "tax_04 p.1"
     }
   ],
+  "usage": {
+    "calls": 221,
+    "inputTokens": 15590,
+    "outputTokens": 6494,
+    "costUsd": 0,
+    "escalated": 0,
+    "errors": 0,
+    "byModel": [
+      {
+        "operation": "extract",
+        "model": "rules-v1",
+        "calls": 60,
+        "inputTokens": 4500,
+        "outputTokens": 6494,
+        "costUsd": 0,
+        "estimated": true
+      },
+      {
+        "operation": "embed",
+        "model": "local-hash-v1",
+        "calls": 161,
+        "inputTokens": 11090,
+        "outputTokens": 0,
+        "costUsd": 0,
+        "estimated": true
+      }
+    ]
+  },
   "robustness": {
     "questions": 72,
     "hitRate": 1,

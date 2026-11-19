@@ -1,3 +1,4 @@
+import { estimateTokens, timedCall } from './usage.js';
 import {
   cleanFields,
   FIELDS,
@@ -92,89 +93,99 @@ function denoiseName(value: string): string {
 export function rulesExtractor(): Extractor {
   return {
     name: 'rules',
-    async extract(input: ExtractionInput): Promise<Extraction> {
-      const text = input.pages.join('\n');
-      if (!input.textLayer || text.trim().length < 20) {
-        return {
-          docType: 'other',
-          docTypeConfidence: 0.2,
-          clientName: null,
-          taxYear: null,
-          fields: [],
-          model: 'rules-v1',
-        };
-      }
-      const { docType, confidence: typeConfidence } = detectType(text);
-      if (docType === 'other') {
-        return {
-          docType,
-          docTypeConfidence: typeConfidence,
-          clientName: null,
-          taxYear: null,
-          fields: [],
-          model: 'rules-v1',
-        };
-      }
-      const noisy = noiseLevel(text) > 0.5;
-      const fields: ExtractedField[] = FIELDS[docType].map((def) => {
-        for (const pattern of PATTERNS[docType][def.name] ?? []) {
-          const match = text.match(pattern);
-          if (!match?.[1]) continue;
-          let raw = match[1].trim();
-          if (/^(not signed|n\/a|none|-)$/i.test(raw)) return { name: def.name, value: null, confidence: 0.9 };
-          if (def.kind === 'name') raw = noisy ? denoiseName(raw) : raw;
-          const value = normalizeValue(def.kind, raw);
-          if (value === null) return { name: def.name, value: null, confidence: 0.3 };
-          return { name: def.name, value, confidence: noisy ? 0.65 : 0.95 };
-        }
-        // Not found: probably absent if optional; for a required field we likely missed it.
-        return { name: def.name, value: null, confidence: def.required ? 0.4 : 0.85 };
-      });
+    // Recorded like a model call (cost 0, estimated tokens), so the Usage page shows offline work too.
+    extract: (input: ExtractionInput) =>
+      timedCall(
+        { operation: 'extract', provider: 'local', model: 'rules-v1' },
+        () => extractWithRules(input),
+        (out) => ({
+          inputTokens: estimateTokens(input.pages),
+          outputTokens: estimateTokens([JSON.stringify(out.fields)]),
+          tokensEstimated: true,
+        }),
+      ),
+  };
+}
 
-      // Currency from symbols when there is no explicit label.
-      const currency = fields.find((x) => x.name === 'currency');
-      if (currency && currency.value === null) {
-        const symbol = text.match(/[$€£]/)?.[0];
-        if (symbol) Object.assign(currency, { value: normalizeValue('currency', symbol), confidence: 0.8 });
-      }
-      // Invoices often put the vendor in the letterhead (first line) instead of a "From:" label.
-      const vendor = fields.find((x) => x.name === 'vendor_name');
-      if (vendor && vendor.value === null) {
-        const first = text
-          .split('\n')
-          .find((line) => line.trim())
-          ?.trim();
-        // "Tax Invoice - Acme Supplies" style headings: the vendor follows the document title.
-        const name = first?.replace(/^(?:tax )?invoice\s*[-:|]\s*/i, '').trim();
-        if (name && !/invoice/i.test(name)) Object.assign(vendor, { value: name, confidence: 0.75 });
-      }
-      const bank = fields.find((x) => x.name === 'bank_name');
-      if (bank && bank.value === null) {
-        const first = text
-          .split('\n')
-          .find((line) => line.trim())
-          ?.trim();
-        // Letterheads often add a division: "First Harbor Bank - Business Banking" → "First Harbor Bank".
-        const name = first?.replace(/\s+[-|]\s+(?:business|personal|private|commercial)\b.*$/i, '').trim();
-        if (name) Object.assign(bank, { value: name, confidence: 0.75 });
-      }
+async function extractWithRules(input: ExtractionInput): Promise<Extraction> {
+  const text = input.pages.join('\n');
+  if (!input.textLayer || text.trim().length < 20) {
+    return {
+      docType: 'other',
+      docTypeConfidence: 0.2,
+      clientName: null,
+      taxYear: null,
+      fields: [],
+      model: 'rules-v1',
+    };
+  }
+  const { docType, confidence: typeConfidence } = detectType(text);
+  if (docType === 'other') {
+    return {
+      docType,
+      docTypeConfidence: typeConfidence,
+      clientName: null,
+      taxYear: null,
+      fields: [],
+      model: 'rules-v1',
+    };
+  }
+  const noisy = noiseLevel(text) > 0.5;
+  const fields: ExtractedField[] = FIELDS[docType].map((def) => {
+    for (const pattern of PATTERNS[docType][def.name] ?? []) {
+      const match = text.match(pattern);
+      if (!match?.[1]) continue;
+      let raw = match[1].trim();
+      if (/^(not signed|n\/a|none|-)$/i.test(raw)) return { name: def.name, value: null, confidence: 0.9 };
+      if (def.kind === 'name') raw = noisy ? denoiseName(raw) : raw;
+      const value = normalizeValue(def.kind, raw);
+      if (value === null) return { name: def.name, value: null, confidence: 0.3 };
+      return { name: def.name, value, confidence: noisy ? 0.65 : 0.95 };
+    }
+    // Not found: probably absent if optional; for a required field we likely missed it.
+    return { name: def.name, value: null, confidence: def.required ? 0.4 : 0.85 };
+  });
 
-      const cleaned = cleanFields(docType, fields);
-      const get = (name: string) => cleaned.find((x) => x.name === name)?.value ?? null;
-      const yearFrom = (date: string | null) => (date ? Number(date.slice(0, 4)) : null);
-      const taxYear =
-        (get('tax_year') ? Number(get('tax_year')) : null) ??
-        yearFrom(get('period_end')) ??
-        yearFrom(get('invoice_date'));
+  // Currency from symbols when there is no explicit label.
+  const currency = fields.find((x) => x.name === 'currency');
+  if (currency && currency.value === null) {
+    const symbol = text.match(/[$€£]/)?.[0];
+    if (symbol) Object.assign(currency, { value: normalizeValue('currency', symbol), confidence: 0.8 });
+  }
+  // Invoices often put the vendor in the letterhead (first line) instead of a "From:" label.
+  const vendor = fields.find((x) => x.name === 'vendor_name');
+  if (vendor && vendor.value === null) {
+    const first = text
+      .split('\n')
+      .find((line) => line.trim())
+      ?.trim();
+    // "Tax Invoice - Acme Supplies" style headings: the vendor follows the document title.
+    const name = first?.replace(/^(?:tax )?invoice\s*[-:|]\s*/i, '').trim();
+    if (name && !/invoice/i.test(name)) Object.assign(vendor, { value: name, confidence: 0.75 });
+  }
+  const bank = fields.find((x) => x.name === 'bank_name');
+  if (bank && bank.value === null) {
+    const first = text
+      .split('\n')
+      .find((line) => line.trim())
+      ?.trim();
+    // Letterheads often add a division: "First Harbor Bank - Business Banking" → "First Harbor Bank".
+    const name = first?.replace(/\s+[-|]\s+(?:business|personal|private|commercial)\b.*$/i, '').trim();
+    if (name) Object.assign(bank, { value: name, confidence: 0.75 });
+  }
 
-      return {
-        docType,
-        docTypeConfidence: noisy ? Math.min(typeConfidence, 0.75) : typeConfidence,
-        clientName: get(CLIENT_FIELD[docType]),
-        taxYear,
-        fields: cleaned,
-        model: 'rules-v1',
-      };
-    },
+  const cleaned = cleanFields(docType, fields);
+  const get = (name: string) => cleaned.find((x) => x.name === name)?.value ?? null;
+  const yearFrom = (date: string | null) => (date ? Number(date.slice(0, 4)) : null);
+  const taxYear =
+    (get('tax_year') ? Number(get('tax_year')) : null) ?? yearFrom(get('period_end')) ?? yearFrom(get('invoice_date'));
+
+  return {
+    docType,
+    docTypeConfidence: noisy ? Math.min(typeConfidence, 0.75) : typeConfidence,
+    clientName: get(CLIENT_FIELD[docType]),
+    taxYear,
+    fields: cleaned,
+    model: 'rules-v1',
   };
 }

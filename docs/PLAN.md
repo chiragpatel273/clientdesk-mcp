@@ -94,7 +94,7 @@ Build order: 1 → 2 → 3 → 5 → 6 → 4. Every phase must pass `npm run che
 | 2   | Search and citation miss | Right page wins; Voyage documented as the production embedder        | Offline citation ≥ 95%, 0 wrong-client filings, no metric worse (or the best honest result, explained)                     | Done   |
 | 3   | Batch intake + job queue | Upload many documents; a Postgres job queue processes them           | 10 uploads process in the background with visible progress; a forced failure retries, then dead-letters; worker tests      | Done   |
 | 5   | Playwright E2E           | The main journeys tested in a real browser, in CI                    | `npx playwright test` passes locally in under ~3 minutes                                                                   | Done   |
-| 6   | LLM usage and cost       | Every model call recorded (tokens, cost, latency); a Usage page      | An eval run and a batch upload both show on the Usage page; recording tested                                               | Todo   |
+| 6   | LLM usage and cost       | Every model call recorded (tokens, cost, latency); a Usage page      | An eval run and a batch upload both show on the Usage page; recording tested                                               | Done   |
 | 4   | Multiple firms           | `firm_id` everywhere, isolation in the domain layer and Postgres RLS | All tests, E2E and eval pass; cross-firm reads, writes, search, links and filings denied and audited, even with forged ids | Todo   |
 
 ### Phase plans
@@ -181,6 +181,22 @@ Build order: 1 → 2 → 3 → 5 → 6 → 4. Every phase must pass `npm run che
 - Found and fixed by the suite: the audit log page showed a cached list for 15 s, so a refusal you had just caused
   wasn't there; it now always reloads when opened.
 
+**Phase 6: LLM usage and cost panel.**
+
+- Schema: migration `006_llm_calls.sql` (time, staff, source mcp/dashboard/job/startup/script, operation
+  extract/embed/rerank, provider, model, input/output tokens, `tokens_estimated`, `cost_usd`, latency, escalated,
+  success, a short error category, document and job ids). No prompts, document text or answers.
+- Prices in one file, `src/ai/prices.ts` (Claude Haiku 5.5 $0.10/$0.50, Opus 5.5 $4/$20, Groq gpt-oss-20b
+  $0.075/$0.30, 120b $0.15/$0.60, Voyage 3.5 $0.06 per million tokens; offline models 0).
+- Recording without plumbing: each call site reports through `timedCall`/`reportCall`; who and why come from an
+  `AsyncLocalStorage` scope set by `runTool()`, the dashboard API, the job worker and start-up. Recording never
+  throws. Offline models record estimated tokens (characters / 4) at cost 0.
+- The eval runs in its own process and database, so it totals its usage into its report (`usage`); the Usage page
+  lists the latest model run's and the baseline's next to the live numbers.
+- `GET /api/usage?days=` (partners): calls, tokens, cost, average latency, escalation rate, error rate, cost per
+  filed document, per day, per model, per source. Dashboard "Usage" page (partners only in the nav).
+- `rerank` is in the schema for a future model reranker; today's page rerank is lexical and makes no model call.
+
 ### Decisions made on the owner's behalf
 
 (Each with its reason. Newest last.)
@@ -219,6 +235,11 @@ Build order: 1 → 2 → 3 → 5 → 6 → 4. Every phase must pass `npm run che
     download); CI installs its own. Bump with `npm i -D @playwright/test@latest && npx playwright install chromium`.
 15. **E2E specs share one server and run in order** rather than each seeding its own database: a fresh server per
     spec would cost ~15 s each (seeding renders 13 PDFs) and push the suite past the 3-minute budget.
+16. **Usage recording uses AsyncLocalStorage**, not an extra parameter on every extractor and embedder: the call
+    sites stay small and a new route only needs a scope. **Errors are stored as a category** ("Groq 400"), because
+    provider error messages can echo the model's partial answer.
+17. **Prices are third-party-checked estimates** for Groq and Voyage (their pricing pages weren't reachable directly);
+    the file says so and is the one place to correct them.
 
 ### Blocked / needs owner
 

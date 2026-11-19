@@ -1,5 +1,6 @@
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { Db } from '../db/index.js';
+import { usageScope } from '../ai/usage.js';
 import { recordAudit } from '../domain/audit.js';
 import type { Actor } from '../domain/types.js';
 import type { AppServices } from '../services.js';
@@ -19,6 +20,12 @@ export interface ToolResult<T extends Record<string, unknown>> {
   structured: T;
   /** Optional note stored in the audit log (never shown to the model). */
   detail?: string;
+}
+
+/** The document a tool call is about, when it names one: model calls it makes are recorded against it. */
+function documentIdOf(input: unknown): string | null {
+  const id = (input as { documentId?: unknown } | null)?.documentId;
+  return typeof id === 'string' ? id : null;
 }
 
 export interface RunToolOptions {
@@ -51,7 +58,15 @@ export async function runTool<T extends Record<string, unknown>>(
             structured: { status: 'denied', message: READ_ONLY_MESSAGE },
             detail: 'read-only session',
           }
-        : await handler();
+        : await usageScope(
+            {
+              db: ctx.db,
+              staffId: ctx.actor.staffId,
+              source: 'mcp',
+              documentId: documentIdOf(input),
+            },
+            handler,
+          );
     await recordAudit(ctx.db, {
       staffId: ctx.actor.staffId,
       tool,

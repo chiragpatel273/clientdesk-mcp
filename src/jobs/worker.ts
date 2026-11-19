@@ -1,3 +1,4 @@
+import { usageScope } from '../ai/usage.js';
 import type { JobsConfig } from '../config.js';
 import type { Db } from '../db/index.js';
 import { setProcessing } from '../domain/documents.js';
@@ -60,7 +61,10 @@ export function createWorker(deps: WorkerDeps): Worker {
       return true;
     }
     try {
-      const result = await runIntakeStep(db, services, job);
+      const result = await usageScope(
+        { db, staffId: job.createdBy, source: 'job', documentId: job.documentId, jobId: job.id },
+        () => runIntakeStep(db, services, job),
+      );
       if (await advance(db, job, id, result.step, result.done))
         await auditStep(db, job, result.step, 'ok', result.detail);
     } catch (error) {
