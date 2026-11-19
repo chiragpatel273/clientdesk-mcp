@@ -18,6 +18,11 @@ firm's identity provider. Nine tools let Claude look up clients, search document
 inbox, extract fields, match documents to clients, file them, add CRM notes and send unclear cases to a human.
 A small React dashboard shows the audit log, the review queue and the accuracy report.
 
+Version 2 turned the proof of concept into something that runs like a product: a recruiter or client can try it
+without an account, partners can drop a batch of files and watch a background job queue process them, every model
+call is costed, several firms can share one deployment without seeing each other's data, and the main journeys are
+tested in a real browser on every push.
+
 ## How it earns trust
 
 **Access control in code, not prompts.** Every tool checks the signed-in staff member's assignments before reading
@@ -39,6 +44,26 @@ a wrong filing. Everything else goes to the review queue with a reason.
 
 **Every call audited.** Tool calls, downloads and dashboard actions each write one row: who, what, inputs with
 sensitive fields masked, outcome and duration.
+
+**Firms isolated twice.** Every firm-owned table carries a `firm_id`. Every domain query filters on the caller's
+firm, and Postgres row-level security enforces the same rule again: each query runs as a role without bypass rights,
+with the firm set for that transaction only. Same-firm foreign keys make a cross-firm reference impossible even for a
+bug that slips past both. A second fictional firm with its own "Acme Ltd" proves it: 21 tests try cross-firm reads,
+writes, searches, filings, links and job retries with forged ids. Another firm's id answers "not found", so ids can't
+be probed, and the attempt is logged as denied.
+
+**Background work that fails safely.** Batch intake runs on a job queue inside Postgres (`FOR UPDATE SKIP LOCKED`, no
+Redis): each document goes through stored → text → indexed → fields → matched → filed or review, each step audited
+and safe to repeat. Failures retry with exponential backoff, then land in a dead-letter state and the document goes
+back to people; a stuck worker's job is reclaimed. Filing follows exactly the same rules as filing through Claude.
+
+**Costs you can see.** Every model call (extraction and embeddings) is recorded with tokens, estimated cost from one
+price table, latency, escalations and errors, and never document text. The Usage page shows cost per day, per model
+and per filed document.
+
+**Try it safely.** "Try the demo" opens a read-only, partner-level session. Read-only is enforced on the server in
+two central places (the API router and the tool runner), so every write is refused with a 403 and logged, and new
+routes inherit the rule.
 
 ## Measured, not claimed
 
@@ -82,14 +107,18 @@ What changed along the way (from the report):
 
 ## Stack
 
-TypeScript, MCP SDK (Streamable HTTP + stdio), Postgres + pgvector (Neon; PGlite locally and in tests), Claude API
+TypeScript, MCP SDK (Streamable HTTP + stdio), Postgres + pgvector with row-level security and a `SKIP LOCKED` job
+queue (Neon; PGlite locally and in tests), Claude API
 (supported) and Groq gpt-oss (measured) with structured outputs, pdf.js, WorkOS AuthKit (OAuth with dynamic client registration),
-Amazon S3, React + Vite + Tailwind + shadcn/ui, Render. Built with Claude Code, using project skills for adding
+Amazon S3, React + Vite + Tailwind + shadcn/ui, Recharts, Vitest, Playwright, Render. Built with Claude Code, using project skills for adding
 tools and migrations and a security-review skill run before each commit.
 
 ## Numbers that matter to a client
 
-- 104 automated tests, including a denied-path test with an audit check for every tool.
+- 174 automated tests and 9 Playwright end-to-end tests, including a denied-path test with an audit check for every
+  tool and 21 cross-firm isolation tests.
+- Citation accuracy from 93.3% to 100% offline after v2's ranking changes (98.6% on a 72-question robustness set
+  that guards against tuning to the asked questions).
 - 0 wrong-client filings on the labelled set; 98.1% field accuracy; 10% sent to review.
 - Video: https://youtu.be/hFSXsezX2ac · Repo: https://github.com/chiragpatel273/clientdesk-mcp · Live dashboard:
-  https://clientdesk-mcp.onrender.com/dashboard (sign-in required)
+  https://clientdesk-mcp.onrender.com/dashboard ("Try the demo", no account needed)

@@ -3,30 +3,38 @@
 **A Claude connector for professional-services firms.** Staff ask Claude about clients and documents in plain
 English. ClientDesk answers through MCP tools with cited sources, files incoming documents only when it is sure,
 enforces who may see which client, and logs every call. A dashboard shows the audit log, the review queue and a
-measured accuracy report.
+measured accuracy report, batch intake through a background job queue, and the cost of every model call. Several
+firms can share one deployment, isolated in code and by Postgres row-level security.
 
-All data is fictional: the demo firm is _Northbridge Advisory_ with 3 staff, 12 clients and 13 documents.
+All data is fictional: the demo firm is _Northbridge Advisory_ with 3 staff, 12 clients and 13 documents, and a
+second firm, _Harbourline Tax Partners_, exists only to prove that nothing crosses between firms.
 
 ## Demo
 
 - **Video:** [2-minute walkthrough](https://youtu.be/hFSXsezX2ac): Claude, signed in as an assistant, answers with
   citations, files an invoice, sends a blurry scan to review and is refused a client it isn't assigned to; then the
   partner's dashboard shows the audit trail, the review queue and the accuracy report.
-- **Live dashboard:** https://clientdesk-mcp.onrender.com/dashboard (sign-in required; the MCP endpoint is
-  `https://clientdesk-mcp.onrender.com/mcp`). Hosted on Render's free plan, so the first request after a quiet spell
-  takes about a minute to wake the server.
+- **Live dashboard:** https://clientdesk-mcp.onrender.com/dashboard: press **Try the demo** for a read-only,
+  partner-level look at the fictional firm, with no account needed. Every change is refused by the server and shows
+  up in the audit log. The MCP endpoint is `https://clientdesk-mcp.onrender.com/mcp`. Hosted on Render's free plan,
+  so the first request after a quiet spell takes about a minute to wake the server.
 
 ## What it proves
 
-| Concern                 | How ClientDesk handles it                                                                                                                                                                                               |
-| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Real Claude integration | A remote MCP server (Streamable HTTP + stdio) that Claude web, Desktop and Code connect to, with OAuth sign-in (dynamic client registration).                                                                           |
-| Access control          | Partners see every client; assistants only assigned ones. Enforced in code before any query, in search filters, on document links and on the dashboard, never in a prompt.                                              |
-| Cited answers           | Hybrid search (pgvector + Postgres full-text + exact identifiers) returns passages with document, client, page and a signed, expiring link.                                                                             |
-| Safe automation         | Extraction gives a confidence per field; matching scores every client with reasons. A document is filed only above 85% and 15 points clear of the runner-up; look-alike clients need a second identifier. Else: review. |
-| Measured accuracy       | 60 labelled documents and 30 questions; `npm run eval` publishes field accuracy, wrong-client filings, review rate, search hit rate and citation accuracy, even when they miss.                                         |
-| Auditability            | Every tool call, download and dashboard action writes an audit row: who, what, inputs (sensitive fields masked), outcome, duration.                                                                                     |
-| AI-first development    | Built with Claude Code: `CLAUDE.md`, skills (`add-mcp-tool`, `add-migration`, `security-review`) and hooks that block a turn while typecheck or lint fails.                                                             |
+| Concern                   | How ClientDesk handles it                                                                                                                                                                                                                                                                                                           |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Real Claude integration   | A remote MCP server (Streamable HTTP + stdio) that Claude web, Desktop and Code connect to, with OAuth sign-in (dynamic client registration).                                                                                                                                                                                       |
+| Access control            | Partners see every client; assistants only assigned ones. Enforced in code before any query, in search filters, on document links and on the dashboard, never in a prompt.                                                                                                                                                          |
+| Cited answers             | Hybrid search (pgvector + Postgres full-text + exact identifiers) returns passages with document, client, page and a signed, expiring link.                                                                                                                                                                                         |
+| Safe automation           | Extraction gives a confidence per field; matching scores every client with reasons. A document is filed only above 85% and 15 points clear of the runner-up; look-alike clients need a second identifier. Else: review.                                                                                                             |
+| Measured accuracy         | 60 labelled documents, 30 questions and a 72-question robustness set; `npm run eval` publishes field accuracy, wrong-client filings, review rate, search hit rate and citation accuracy, even when they miss.                                                                                                                       |
+| Multi-tenancy             | `firm_id` on every firm-owned table. Isolated twice: every domain query filters on the caller's firm, and Postgres row-level security (role `clientdesk_app`, per-transaction `app.firm_id`) enforces it again; same-firm foreign keys make cross-firm references impossible. Another firm's id answers "not found" and is audited. |
+| Background jobs           | Batch intake runs on a job queue in Postgres (`FOR UPDATE SKIP LOCKED`): retries with exponential backoff, dead-letter state, idempotency keys, stuck-job reclaim. Each step is audited; filing keeps the same rules.                                                                                                               |
+| LLM cost tracking         | Every model call (extraction, embeddings) is recorded with tokens, estimated cost, latency, escalation and errors, never document text; a Usage page shows cost per day, per model and per filed document.                                                                                                                          |
+| Tested end to end         | 174 unit and integration tests (vitest, in-memory Postgres) plus 9 Playwright tests in Chromium against the real server, all in CI.                                                                                                                                                                                                 |
+| Try it without an account | "Try the demo": a read-only, partner-level session, enforced on the server (every write is refused with a 403 and audited) and rate-limited per IP.                                                                                                                                                                                 |
+| Auditability              | Every tool call, download and dashboard action writes an audit row: who, what, inputs (sensitive fields masked), outcome, duration.                                                                                                                                                                                                 |
+| AI-first development      | Built with Claude Code: `CLAUDE.md`, skills (`add-mcp-tool`, `add-migration`, `security-review`) and hooks that block a turn while typecheck or lint fails.                                                                                                                                                                         |
 
 ## Tools
 
@@ -90,10 +98,17 @@ npm run dashboard:build
 npm run dev          # MCP at http://localhost:3000/mcp, dashboard at http://localhost:3000/dashboard/
 npm run check        # typecheck + lint + tests
 npm run eval -- --extractor=rules   # offline accuracy report → eval/baseline.md (model runs → eval/report.md)
+npx playwright test  # end-to-end tests in Chromium (builds the dashboard, starts its own server on :3399)
 ```
 
+Locally (`AUTH_MODE=dev`) the dashboard's user picker switches between Maya (partner), Tom and Ana (assistants), the
+second firm's Lena and Sam, and **Try the demo** (set `DEMO_LOGIN=true`). On the Inbox page, partners can drop several
+files into **Batch intake** and watch each one being read, indexed, extracted, matched and filed (or sent to review)
+by the background worker; the **Usage** page then shows the model calls it made.
+
 Add `GROQ_API_KEY` (free tier; the extractor the live demo uses) or `ANTHROPIC_API_KEY` (Claude), and
-`VOYAGE_API_KEY` (semantic embeddings) to `.env` to use real models; everything else stays the same. `npm run seed -- --reset` reloads the demo firm.
+`VOYAGE_API_KEY` (`voyage-3.5`, the production embeddings) to `.env` to use real models; everything else stays the
+same, and the next start re-embeds every passage. `npm run seed -- --reset` reloads the demo firms.
 
 For dashboard development with hot reload: `npm run dev` in one terminal, `npm run dashboard:dev` in another
 (Vite on :5173, proxied to the server).
@@ -120,7 +135,8 @@ Claude connects from Anthropic's cloud, so the server needs a public HTTPS URL a
 
 ## Deploy
 
-`render.yaml` (Render blueprint) + `Dockerfile` build the server and dashboard into one image. Production uses
+`render.yaml` (Render blueprint) + `Dockerfile` build the server and dashboard into one image; the job worker runs
+in the same process (`WORKER=1`), or separately with `npm run worker`. Production uses
 Neon (Postgres + pgvector) via `DATABASE_URL` and Amazon S3 for files (`STORAGE=s3`, an IAM key limited to one
 bucket; Cloudflare R2 and other S3-compatible services also work). Production refuses to
 start without OAuth, an https `PUBLIC_URL`, `SESSION_SECRET` and `LINK_SECRET`.
@@ -129,18 +145,21 @@ start without OAuth, an https `PUBLIC_URL`, `SESSION_SECRET` and `LINK_SECRET`.
 
 ```
 Claude (web / Desktop / Code)                 Dashboard (React + Vite, /dashboard)
-        │  MCP: Streamable HTTP or stdio              │  JSON API (/api), session cookie or dev header
+        │  MCP: Streamable HTTP or stdio              │  JSON API (/api): session cookie (staff or demo) or dev header
         ▼                                             ▼
-src/http.ts ── OAuth bearer check → resolveActor()   src/web/ ── session, sign-in, API routes
-        ▼                                             │
-src/mcp/server.ts ── one McpServer per request        │
-        ▼                                             │
-src/mcp/tools/* ── runTool() → audit row              │
-        ▼                                             ▼
-src/domain/* ── access, clients, documents, intake, matching, search, audit (plain functions over Db)
-        ▼                       ▼                         ▼
-src/db/ (PGlite / Neon)   src/ai/ (Groq, Claude,     src/storage/ (local / S3)
-                          Voyage, offline fallbacks)
+src/http.ts ── OAuth bearer → resolveActor()        src/web/ ── sign-in, demo session, read-only guard, API routes
+        │      (staff member + firm)                  │
+        ▼                                             │                        src/jobs/ ── Postgres queue
+src/mcp/server.ts ── one McpServer per request        │                          (SKIP LOCKED, retries,
+        ▼                                             │                           dead-letter) → worker →
+src/mcp/tools/* ── runTool() → audit row, usage scope │                           intake steps per document
+        ▼                                             ▼                                    │
+src/domain/* ── access, clients, documents, intake, matching, search, audit, usage ◄───────┘
+        │        every query: db.forFirm(actor.firmId) + firm_id filter
+        ▼                       ▼                              ▼
+src/db/ (PGlite / Neon):  src/ai/ (Groq, Claude, Voyage,   src/storage/ (local / S3)
+RLS per firm, role        offline fallbacks) → every call
+clientdesk_app            recorded in llm_calls
 ```
 
 ## Built with Claude Code
@@ -155,7 +174,9 @@ src/db/ (PGlite / Neon)   src/ai/ (Groq, Claude,     src/storage/ (local / S3)
 - [`docs/PLAN.md`](docs/PLAN.md): plan, decisions and status
 - [`docs/DEMO-SCRIPT.md`](docs/DEMO-SCRIPT.md): the 3-minute video, shot by shot
 - [`docs/CASE-STUDY.md`](docs/CASE-STUDY.md): the write-up for clients
-- [`eval/report.md`](eval/report.md): the latest accuracy report
+- [`docs/V2-REPORT.md`](docs/V2-REPORT.md): what v2 added, measured, and decided
+- [`eval/report.md`](eval/report.md): the latest model accuracy report; [`eval/baseline.md`](eval/baseline.md): the
+  offline run CI repeats on every push
 
 ## License
 

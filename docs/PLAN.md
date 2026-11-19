@@ -275,9 +275,21 @@ Build order: 1 → 2 → 3 → 5 → 6 → 4. Every phase must pass `npm run che
 
 ### Blocked / needs owner
 
-(Nothing yet.)
+Nothing was blocked in the build. These need the owner (details and commands in `docs/V2-REPORT.md`):
+
+- **Neon: migration 007 creates role `clientdesk_app` and grants it to the connecting user.** Verified on PGlite
+  (and an upgrade test from a v1 database with data); not verified on Neon, which this run must not touch.
+- **Render:** `DEMO_LOGIN=true` and `TRUST_PROXY=1` (in `render.yaml`; add by hand if the service isn't synced from
+  the blueprint).
+- **Measured runs with keys** (none were made): Groq eval (free), Claude eval (about $0.05–0.40), Voyage.
+- **Re-record the demo video** for Try the demo, batch intake, the Usage page and firm isolation.
 
 ## Status
+
+- **v2 (2026-11-19, branch `v2`, not merged or deployed):** all six phases built offline and committed one by one:
+  1 Try the demo, 2 search (citation 93.3% → 100% offline), 3 batch intake on a Postgres job queue, 5 Playwright
+  E2E, 6 LLM usage and cost, 4 multiple firms with RLS. 174 vitest tests + 9 Playwright tests, offline eval,
+  both builds and the Docker image pass. Report: `docs/V2-REPORT.md`.
 
 - **Day 1 (done):** schema and migrations, PGlite/pg `Db`, demo firm, `get_client` with access check + audit, stateless
   HTTP (`AUTH_MODE=dev`) and stdio, Claude Code setup (CLAUDE.md, skills, hooks), 11 tests, CI.

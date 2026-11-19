@@ -12,13 +12,13 @@ Record against the live server (https://clientdesk-mcp.onrender.com) with two br
 1. Neon console → SQL Editor → run:
 
    ```sql
-   truncate audit_log, document_chunks, documents, notes, open_items, contacts,
+   truncate llm_calls, jobs, batches, audit_log, document_chunks, documents, notes, open_items, contacts,
             client_assignments, clients, staff restart identity cascade;
    ```
 
 2. Render → `clientdesk-mcp` → Manual Deploy → Restart service. On start, the server finds the database empty and
-   reloads the demo firm and its 13 documents (logs: "Seeded the Northbridge Advisory demo firm." and "Loaded 13
-   demo documents.").
+   reloads both demo firms and their documents (logs: "Seeded the Northbridge Advisory demo firm.", "Loaded 13
+   Northbridge Advisory demo documents.", and the same for Harbourline Tax Partners).
 
 (`npm run seed -- --reset` with the Neon `DATABASE_URL` does the same from a laptop, but many networks block
 Postgres's port 5432. Never paste the connection string anywhere: it contains the password.)
