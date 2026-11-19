@@ -93,7 +93,7 @@ Build order: 1 → 2 → 3 → 5 → 6 → 4. Every phase must pass `npm run che
 | 1   | Try the demo             | No login wall: a read-only demo session, enforced on the server      | Fresh browser → "Try the demo" → Overview, Inbox, Review, Audit, Accuracy; every write refused (403) and audited           | Done   |
 | 2   | Search and citation miss | Right page wins; Voyage documented as the production embedder        | Offline citation ≥ 95%, 0 wrong-client filings, no metric worse (or the best honest result, explained)                     | Done   |
 | 3   | Batch intake + job queue | Upload many documents; a Postgres job queue processes them           | 10 uploads process in the background with visible progress; a forced failure retries, then dead-letters; worker tests      | Done   |
-| 5   | Playwright E2E           | The main journeys tested in a real browser, in CI                    | `npx playwright test` passes locally in under ~3 minutes                                                                   | Todo   |
+| 5   | Playwright E2E           | The main journeys tested in a real browser, in CI                    | `npx playwright test` passes locally in under ~3 minutes                                                                   | Done   |
 | 6   | LLM usage and cost       | Every model call recorded (tokens, cost, latency); a Usage page      | An eval run and a batch upload both show on the Usage page; recording tested                                               | Todo   |
 | 4   | Multiple firms           | `firm_id` everywhere, isolation in the domain layer and Postgres RLS | All tests, E2E and eval pass; cross-firm reads, writes, search, links and filings denied and audited, even with forged ids | Todo   |
 
@@ -167,6 +167,20 @@ Build order: 1 → 2 → 3 → 5 → 6 → 4. Every phase must pass `npm run che
   doesn't exist in PGlite. A step that succeeds but crashes before recording it runs again: every step is
   idempotent (rebuild chunks, cached extraction, guarded status updates).
 
+**Phase 5: Playwright end-to-end tests.**
+
+- `playwright.config.ts`: Chromium only; `webServer` builds the dashboard and starts the real server on :3399 with
+  explicit offline settings (in-memory PGlite, rules extractor, local embeddings, local files, blank keys), so a
+  developer's `.env` can't leak keys or S3 into a test run. One worker: the specs share one database and run in file
+  order (`e2e/1-…` to `5-…`).
+- Specs: partner sees all five pages; assistant refused an unassigned client (a real MCP `tools/call` over
+  Streamable HTTP) and the refusal shows in the partner's audit log; assistant sees only their own rows, no details,
+  no batch intake; partner resolves a review item Claude sent to review; demo visitor reads everything, an upload is
+  refused and audited, Exit demo; batch upload shows progress until every document is filed or reviewed.
+- CI job `e2e`: installs Chromium, runs the suite, uploads traces and screenshots on failure.
+- Found and fixed by the suite: the audit log page showed a cached list for 15 s, so a refusal you had just caused
+  wasn't there; it now always reloads when opened.
+
 ### Decisions made on the owner's behalf
 
 (Each with its reason. Newest last.)
@@ -201,6 +215,10 @@ Build order: 1 → 2 → 3 → 5 → 6 → 4. Every phase must pass `npm run che
     Claude) can still deal with it; a partner's retry takes it back only if nobody has handled it meanwhile.
 13. **The worker runs inside the web process** on Render (no paid background worker needed); `npm run worker` exists
     for running it separately.
+14. **Playwright pinned to 1.58.2**, the version whose Chromium is already cached on this machine (no 150 MB browser
+    download); CI installs its own. Bump with `npm i -D @playwright/test@latest && npx playwright install chromium`.
+15. **E2E specs share one server and run in order** rather than each seeding its own database: a fresh server per
+    spec would cost ~15 s each (seeding renders 13 PDFs) and push the suite past the 3-minute budget.
 
 ### Blocked / needs owner
 

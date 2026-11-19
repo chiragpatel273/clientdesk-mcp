@@ -32,6 +32,8 @@ export function AuditPage() {
     initialPageParam: null as number | null,
     getNextPageParam: (last) => last.nextBefore ?? undefined,
     placeholderData: keepPreviousData,
+    // The log changes with every action anywhere: always load it fresh when the page opens.
+    refetchOnMount: 'always',
   });
 
   const rows = useMemo(() => audit.data?.pages.flatMap((p) => p.rows), [audit.data]);

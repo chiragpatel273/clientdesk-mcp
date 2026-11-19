@@ -44,6 +44,33 @@ jobs:
           name: accuracy-report
           path: eval/baseline.*
 
+  # End-to-end: Chromium against the real server (AUTH_MODE=dev, in-memory database, offline AI). Traces and
+  # screenshots of failures are uploaded.
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            dashboard/package-lock.json
+      - run: npm ci
+      - run: npm run dashboard:install
+      - run: npx playwright install --with-deps chromium
+      - run: npx playwright test
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-traces
+          path: |
+            test-results/
+            playwright-report/
+          retention-days: 14
+
   # The Claude run costs money, so it only runs when started by hand (Actions → CI → Run workflow) and needs the
   # ANTHROPIC_API_KEY repository secret.
   eval-claude:
