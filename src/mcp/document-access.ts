@@ -1,4 +1,4 @@
-import { canAccessClient, partitionByAccess } from '../domain/access.js';
+import { belongsToAnotherFirm, canAccessClient, partitionByAccess } from '../domain/access.js';
 import type { DocumentRecord } from '../domain/documents.js';
 import type { MatchResult } from '../domain/matching.js';
 import type { ToolContext } from './run-tool.js';
@@ -55,4 +55,18 @@ export async function redactHiddenClients(
   return candidates
     .filter((c) => denied.has(c.clientId))
     .reduce((out, c) => out.replaceAll(c.name, 'a client you are not assigned to'), text);
+}
+
+/**
+ * The audit outcome for an id that wasn't found. The caller always gets the same "not found" answer, so ids can't be
+ * probed across firms; when the id belongs to another firm the attempt is logged as denied.
+ */
+export async function notFoundAudit(
+  ctx: Pick<ToolContext, 'db'>,
+  kind: 'client' | 'document',
+  id: string,
+): Promise<{ outcome: 'ok' | 'denied'; detail?: string }> {
+  return (await belongsToAnotherFirm(ctx.db, kind, id))
+    ? { outcome: 'denied', detail: `${kind} of another firm` }
+    : { outcome: 'ok' };
 }

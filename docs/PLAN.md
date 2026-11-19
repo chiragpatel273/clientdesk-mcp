@@ -95,7 +95,7 @@ Build order: 1 → 2 → 3 → 5 → 6 → 4. Every phase must pass `npm run che
 | 3   | Batch intake + job queue | Upload many documents; a Postgres job queue processes them           | 10 uploads process in the background with visible progress; a forced failure retries, then dead-letters; worker tests      | Done   |
 | 5   | Playwright E2E           | The main journeys tested in a real browser, in CI                    | `npx playwright test` passes locally in under ~3 minutes                                                                   | Done   |
 | 6   | LLM usage and cost       | Every model call recorded (tokens, cost, latency); a Usage page      | An eval run and a batch upload both show on the Usage page; recording tested                                               | Done   |
-| 4   | Multiple firms           | `firm_id` everywhere, isolation in the domain layer and Postgres RLS | All tests, E2E and eval pass; cross-firm reads, writes, search, links and filings denied and audited, even with forged ids | Todo   |
+| 4   | Multiple firms           | `firm_id` everywhere, isolation in the domain layer and Postgres RLS | All tests, E2E and eval pass; cross-firm reads, writes, search, links and filings denied and audited, even with forged ids | Done   |
 
 ### Phase plans
 
@@ -197,6 +197,28 @@ Build order: 1 → 2 → 3 → 5 → 6 → 4. Every phase must pass `npm run che
   filed document, per day, per model, per source. Dashboard "Usage" page (partners only in the nav).
 - `rerank` is in the schema for a future model reranker; today's page rerank is lexical and makes no model call.
 
+**Phase 4: Multiple firms (multi-tenancy).**
+
+- Schema: migration `007_firms.sql`: `firms`; `firm_id` on every firm-owned table (staff, clients, assignments,
+  contacts, open items, notes, documents, chunks, audit log, batches, jobs, llm_calls), backfilled to Northbridge.
+  Afterwards the column defaults to the transaction's `app.firm_id` setting, so an insert outside a firm scope fails
+  (NOT NULL) instead of landing in some firm. Composite foreign keys `(firm_id, client_id)` etc. make a cross-firm
+  reference impossible even for a bug that bypasses both layers. Document dedupe becomes per firm
+  (`unique (firm_id, content_sha256)`), so an upload can't reveal that another firm holds the same file.
+- Layer 1, domain: `Db.forFirm(firmId)` returns a firm-scoped handle; every domain query on firm data calls
+  `firmOf(db)` (throws on an unscoped handle: fail closed) and filters `firm_id = $n`. `resolveActor()` reads the
+  staff member's firm; MCP servers, dashboard requests, signed links and job steps get the scoped handle.
+- Layer 2, Postgres RLS: every query through a scoped handle runs in its own transaction as role `clientdesk_app`
+  (no BYPASSRLS, not the table owner) with `set_config('app.firm_id', $1, true)`; policies `using` and
+  `with check (firm_id = current_setting('app.firm_id', true))`. The owner connection (no RLS) is used only for
+  migrations, identity lookup (email → staff and firm), the job queue's claim/advance and start-up.
+- Cross-firm ids: a lookup by an id that belongs to another firm answers exactly like "not found" (no existence
+  oracle) but is audited as `denied`, via a `security definer` SQL function that returns only which firm owns an id.
+- Second fictional firm: Harbourline Tax Partners, with its own staff and a client also called "Acme Ltd".
+- Risks: per-query transactions add round trips on Neon (begin+role, setting, query, commit); fine at this scale,
+  a request-level transaction is the next step. On Neon the migration creates role `clientdesk_app` and grants it to
+  the connecting user; if Neon refused that, start-up fails loudly at migration 007 (owner to check in staging).
+
 ### Decisions made on the owner's behalf
 
 (Each with its reason. Newest last.)
@@ -240,6 +262,16 @@ Build order: 1 → 2 → 3 → 5 → 6 → 4. Every phase must pass `npm run che
     provider error messages can echo the model's partial answer.
 17. **Prices are third-party-checked estimates** for Groq and Voyage (their pricing pages weren't reachable directly);
     the file says so and is the one place to correct them.
+18. **Per-query transactions for RLS**, not one transaction per request: no long transactions held open across model
+    calls (seconds), no aborted-transaction cascades, and PGlite (one connection) stays safe under concurrent
+    requests because each scoped query is atomic. Cost: three extra round trips per query on Neon.
+19. **Another firm's id answers "not found"**, not "denied": answering "denied" would confirm the id exists
+    elsewhere. The audit log still records it as `denied` (the spec's "denied and audited"), via a
+    `security definer` function that reveals only which firm owns an id.
+20. **The second firm is seeded everywhere the demo is**, including production, so isolation can be shown live; its
+    staff have no WorkOS logins (dev mode only), so on the live site nobody can sign in as them.
+21. **Dev mode's user picker lists every firm's staff**, so a developer can switch firms; it is unavailable in OAuth
+    mode.
 
 ### Blocked / needs owner
 

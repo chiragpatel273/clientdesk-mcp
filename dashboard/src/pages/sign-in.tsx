@@ -25,7 +25,7 @@ export function SignInPage() {
         <CardHeader className="items-center pt-8 text-center">
           <Logo />
           <CardTitle className="mt-3 text-lg">Sign in to ClientDesk</CardTitle>
-          <CardDescription>Northbridge Advisory staff dashboard</CardDescription>
+          <CardDescription>Staff dashboard for accounting firms</CardDescription>
         </CardHeader>
         <CardContent className="pb-8">
           {staff.isPending ? (

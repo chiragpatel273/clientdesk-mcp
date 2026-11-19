@@ -1,5 +1,5 @@
 import { tokenize, toVectorLiteral, type Embedder } from '../ai/embeddings.js';
-import type { Db } from '../db/index.js';
+import { firmOf, type Db } from '../db/index.js';
 
 export interface SearchOptions {
   /** From `accessibleClientIds`: the search never sees documents outside this list. */
@@ -39,12 +39,12 @@ export function identifiers(query: string): string[] {
 }
 const RRF_K = 60;
 
-// Shared filter: filed documents only, inside the caller's access list, plus optional filters.
-const FILTER = `d.status = 'filed'
-  and ($1::text[] is null or d.client_id = any($1::text[]))
-  and ($2::text is null or d.client_id = $2)
-  and ($3::int is null or d.tax_year = $3)
-  and ($4::text is null or d.doc_type = $4)`;
+// Shared filter: the caller's firm, filed documents only, inside the caller's access list, plus optional filters.
+const FILTER = `d.firm_id = $1 and ch.firm_id = $1 and d.status = 'filed'
+  and ($2::text[] is null or d.client_id = any($2::text[]))
+  and ($3::text is null or d.client_id = $3)
+  and ($4::int is null or d.tax_year = $4)
+  and ($5::text is null or d.doc_type = $5)`;
 
 /**
  * Hybrid search: pgvector similarity and Postgres full-text, merged with reciprocal-rank fusion.
@@ -58,6 +58,7 @@ export async function searchDocuments(
 ): Promise<Passage[]> {
   if (options.allowedClientIds !== 'all' && options.allowedClientIds.length === 0) return [];
   const filters = [
+    firmOf(db),
     options.allowedClientIds === 'all' ? null : options.allowedClientIds,
     options.clientId ?? null,
     options.taxYear ?? null,
@@ -67,8 +68,8 @@ export async function searchDocuments(
   const [vector] = await embedder.embed([query], 'query');
   const semantic = await db.query<{ id: string }>(
     `select ch.id from document_chunks ch join documents d on d.id = ch.document_id
-     where ${FILTER} and ch.embedding_model = $6
-     order by ch.embedding <=> $5::vector limit ${CANDIDATES}`,
+     where ${FILTER} and ch.embedding_model = $7
+     order by ch.embedding <=> $6::vector limit ${CANDIDATES}`,
     [...filters, toVectorLiteral(vector!), embedder.model],
   );
 
@@ -77,8 +78,8 @@ export async function searchDocuments(
   const keyword = terms.length
     ? await db.query<{ id: string }>(
         `select ch.id from document_chunks ch join documents d on d.id = ch.document_id
-         where ${FILTER} and ch.tsv @@ to_tsquery('english', $5)
-         order by ts_rank_cd(ch.tsv, to_tsquery('english', $5)) desc limit ${CANDIDATES}`,
+         where ${FILTER} and ch.tsv @@ to_tsquery('english', $6)
+         order by ts_rank_cd(ch.tsv, to_tsquery('english', $6)) desc limit ${CANDIDATES}`,
         [...filters, terms.join(' | ')],
       )
     : [];
@@ -88,8 +89,8 @@ export async function searchDocuments(
   const exact = codes.length
     ? await db.query<{ id: string }>(
         `select ch.id from document_chunks ch join documents d on d.id = ch.document_id
-         where ${FILTER} and exists (select 1 from unnest($5::text[]) code where position(code in lower(ch.content)) > 0)
-         order by (select count(*) from unnest($5::text[]) code where position(code in lower(ch.content)) > 0) desc,
+         where ${FILTER} and exists (select 1 from unnest($6::text[]) code where position(code in lower(ch.content)) > 0)
+         order by (select count(*) from unnest($6::text[]) code where position(code in lower(ch.content)) > 0) desc,
                   ch.document_id, ch.chunk_index
          limit ${CANDIDATES}`,
         [...filters, codes],
@@ -124,8 +125,8 @@ export async function searchDocuments(
   }>(
     `select ch.id, ch.document_id, d.title, d.client_id, c.name as client_name, d.tax_year, d.doc_type, ch.page, ch.content
      from document_chunks ch join documents d on d.id = ch.document_id join clients c on c.id = d.client_id
-     where ch.id = any($1::text[])`,
-    [ranked.map(([id]) => id)],
+     where ch.id = any($1::text[]) and ch.firm_id = $2 and d.firm_id = $2`,
+    [ranked.map(([id]) => id), firmOf(db)],
   );
   const byId = new Map(details.map((d) => [d.id, d]));
 

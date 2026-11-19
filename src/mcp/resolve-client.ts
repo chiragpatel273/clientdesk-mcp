@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { canAccessClient, partitionByAccess } from '../domain/access.js';
 import { findClients, type ClientRef } from '../domain/clients.js';
+import { notFoundAudit } from './document-access.js';
 import type { ToolContext } from './run-tool.js';
 
 export const ClientRefSchema = z.object({ id: z.string(), name: z.string() });
@@ -24,7 +25,9 @@ export async function resolveClient(
   const matches = await findClients(ctx.db, query);
   if (matches.length === 0) {
     const message = `No client matches "${query}".`;
-    return { refusal: { outcome: 'ok', text: message, structured: { status: 'not_found', message } } };
+    // Another firm's client id is answered exactly like a missing one, but audited as denied.
+    const audit = await notFoundAudit(ctx, 'client', query);
+    return { refusal: { ...audit, text: message, structured: { status: 'not_found', message } } };
   }
   const { allowed, denied } = await partitionByAccess(
     ctx.db,

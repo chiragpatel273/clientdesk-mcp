@@ -18,6 +18,8 @@ export interface Me {
   role: Role;
   /** The "Try the demo" visitor: the server refuses every change. */
   readOnly: boolean;
+  /** The staff member's firm: everything they see belongs to it. */
+  firm: { id: string; name: string };
   authMode: AuthMode;
 }
 
@@ -29,6 +31,8 @@ export interface StaffMember {
   email: string;
   name: string;
   role: Role;
+  /** Dev mode lists every firm's staff. */
+  firm?: string;
 }
 
 export interface Stats {

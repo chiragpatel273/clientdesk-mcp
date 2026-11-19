@@ -12,20 +12,20 @@ import { backoffMs, claimNext, enqueue, getJob, advance } from '../src/jobs/queu
 import { createWorker } from '../src/jobs/worker.js';
 import type { AppServices } from '../src/services.js';
 import { DOCUMENTS } from '../eval/dataset.js';
-import { call, connectAs, demoDb, testServices, TOM } from './helpers.js';
+import { call, connectAs, demoDb, testServices, TOM, nb } from './helpers.js';
 
 const JOBS: JobsConfig = { worker: false, concurrency: 1, maxAttempts: 3, backoffMs: 0, stuckSeconds: 60 };
 
 /** Stores a document for batch intake (no text yet) and queues its job, as the upload route does. */
 async function upload(db: Db, services: AppServices, pages: string[], name: string, key?: string) {
-  const { id } = await ingestDocument(db, services, {
+  const { id } = await ingestDocument(nb(db), services, {
     bytes: await renderTextPdf(name, pages),
     mimeType: 'application/pdf',
     filename: `${name}.pdf`,
     uploadedBy: 'st_maya',
     deferProcessing: true,
   });
-  const { job } = await enqueue(db, { documentId: id, createdBy: 'st_maya', idempotencyKey: key }, JOBS);
+  const { job } = await enqueue(nb(db), { documentId: id, createdBy: 'st_maya', idempotencyKey: key }, JOBS);
   return { documentId: id, job };
 }
 
@@ -56,8 +56,8 @@ describe('batch intake pipeline', () => {
 
     let filed = 0;
     for (const { d, documentId, job } of uploaded) {
-      expect((await getJob(db, job.id))?.status).toBe('done');
-      const doc = (await getDocument(db, documentId))!;
+      expect((await getJob(nb(db), job.id))?.status).toBe('done');
+      const doc = (await getDocument(nb(db), documentId))!;
       if (doc.status === 'filed') {
         filed++;
         expect(doc.clientId).toBe(d.clientId); // never the wrong client
@@ -93,9 +93,9 @@ describe('batch intake pipeline', () => {
     await createWorker({ db, services, config: JOBS }).runUntilIdle();
 
     expect(calls).toBe(3); // max attempts
-    const dead = (await getJob(db, job.id))!;
+    const dead = (await getJob(nb(db), job.id))!;
     expect(dead).toMatchObject({ status: 'dead', step: 'embedded', lastError: 'model unavailable (503)' });
-    expect((await getDocument(db, documentId))?.status).toBe('inbox');
+    expect((await getDocument(nb(db), documentId))?.status).toBe('inbox');
     expect(await auditTools(db, documentId)).toEqual([
       'job:text_extracted:ok',
       'job:embedded:ok',
@@ -153,7 +153,7 @@ describe('batch intake pipeline', () => {
       [job.id],
     );
     await createWorker({ db, services, config: JOBS }).tick();
-    expect(await getJob(db, job.id)).toMatchObject({
+    expect(await getJob(nb(db), job.id)).toMatchObject({
       status: 'dead',
       lastError: expect.stringMatching(/stopped responding/),
     });
@@ -166,7 +166,7 @@ describe('batch intake pipeline', () => {
     const { documentId, job } = await upload(db, services, ['INVOICE\nTotal due: $1.00'], 'v');
     await db.query(`update staff set role = 'assistant' where id = 'st_maya'`);
     await createWorker({ db, services, config: JOBS }).runUntilIdle();
-    expect(await getJob(db, job.id)).toMatchObject({ status: 'dead', attempts: 1 });
+    expect(await getJob(nb(db), job.id)).toMatchObject({ status: 'dead', attempts: 1 });
     expect(await auditTools(db, documentId)).toEqual(['job:dead_letter:denied']);
     await db.close();
   }, 60_000);
@@ -175,7 +175,7 @@ describe('batch intake pipeline', () => {
     const services = testServices();
     const db = await demoDb();
     const { documentId, job } = await upload(db, services, ['A'.repeat(50)], 'u', 'key-12345678');
-    const second = await enqueue(db, { documentId, createdBy: 'st_maya', idempotencyKey: 'key-12345678' }, JOBS);
+    const second = await enqueue(nb(db), { documentId, createdBy: 'st_maya', idempotencyKey: 'key-12345678' }, JOBS);
     expect(second).toMatchObject({ created: false, job: { id: job.id } });
     await db.close();
   }, 60_000);
@@ -285,7 +285,7 @@ describe('batch intake API', () => {
     const broken = testServices({ extractor: { name: 'broken', extract: () => Promise.reject(new Error('down')) } });
     const { documentId, job } = await upload(db, broken, ['INVOICE\nBill to: Acme Ltd\nTotal due: $7.00'], 'retry-me');
     await createWorker({ db, services: broken, config: JOBS }).runUntilIdle();
-    expect((await getJob(db, job.id))?.status).toBe('dead');
+    expect((await getJob(nb(db), job.id))?.status).toBe('dead');
 
     const dead = (await (await req('/api/jobs?status=dead', 'maya@northbridge.example')).json()) as {
       items: { jobId: number }[];
@@ -293,9 +293,9 @@ describe('batch intake API', () => {
     expect(dead.items.map((i) => i.jobId)).toContain(job.id);
 
     expect((await req(`/api/jobs/${job.id}/retry`, 'maya@northbridge.example', { method: 'POST' })).status).toBe(200);
-    expect((await getDocument(db, documentId))?.status).toBe('processing');
+    expect((await getDocument(nb(db), documentId))?.status).toBe('processing');
     await createWorker({ db, services, config: JOBS }).runUntilIdle();
-    expect((await getJob(db, job.id))?.status).toBe('done');
+    expect((await getJob(nb(db), job.id))?.status).toBe('done');
     expect((await req(`/api/jobs/${job.id}/retry`, 'maya@northbridge.example', { method: 'POST' })).status).toBe(404);
   }, 60_000);
 });

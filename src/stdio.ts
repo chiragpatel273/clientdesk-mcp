@@ -22,7 +22,7 @@ if (!actor) {
   process.exit(1);
 }
 
-const server = createMcpServer({ db, actor, services });
+const server = createMcpServer({ db: db.forFirm(actor.firmId), actor, services });
 await server.connect(new StdioServerTransport());
 log(
   `Ready as ${actor.name} (${actor.role}); extractor ${services.extractor.name}, embeddings ${services.embedder.model}.`,

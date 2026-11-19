@@ -5,7 +5,7 @@ import { canAccessClient } from '../../domain/access.js';
 import { getDocument, markFiled, retitleAndReindex } from '../../domain/documents.js';
 import { computeMatch, ensureExtraction } from '../../domain/intake.js';
 import { closeOpenItem } from '../../domain/open-items.js';
-import { redactHiddenClients } from '../document-access.js';
+import { redactHiddenClients, notFoundAudit } from '../document-access.js';
 import { runTool, type ToolContext } from '../run-tool.js';
 
 export const FileDocumentOutput = {
@@ -69,7 +69,11 @@ export function registerFileDocument(server: McpServer, ctx: ToolContext): void 
           const doc = await getDocument(ctx.db, input.documentId);
           if (!doc) {
             const message = `No document with id ${input.documentId}.`;
-            return { outcome: 'ok', text: message, structured: { status: 'not_found', message } };
+            return {
+              ...(await notFoundAudit(ctx, 'document', input.documentId)),
+              text: message,
+              structured: { status: 'not_found', message },
+            };
           }
           if (doc.status !== 'inbox') {
             const message =

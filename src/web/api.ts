@@ -4,8 +4,8 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import express, { type NextFunction, type Request, type Response, Router } from 'express';
 import type { Config } from '../config.js';
-import type { Db } from '../db/index.js';
-import { accessibleClientIds, canAccessClient, partitionByAccess } from '../domain/access.js';
+import { firmOf, type Db } from '../db/index.js';
+import { accessibleClientIds, belongsToAnotherFirm, canAccessClient, partitionByAccess } from '../domain/access.js';
 import { recordAudit } from '../domain/audit.js';
 import { countOpenItems, listAudit, staffNames, toolCallsToday } from '../domain/dashboard.js';
 import {
@@ -38,6 +38,8 @@ type Deps = { db: Db; config: Config; services: AppServices; projectRoot: string
 declare module 'express-serve-static-core' {
   interface Request {
     staff?: Actor;
+    /** The database scoped to the signed-in staff member's firm (domain filter + row-level security). */
+    db?: Db;
   }
 }
 
@@ -93,22 +95,23 @@ export async function resolveDashboardActor(req: Request, db: Db, config: Config
 }
 
 export function createApiRouter(deps: Deps): Router {
-  const { db, config, services } = deps;
+  const { db: rootDb, config, services } = deps;
   const router = Router();
 
   // Who is calling: a session cookie (dashboard sign-in or "Try the demo") in either auth mode, else, in dev mode
   // only, the dev header.
   router.use(async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const actor = await resolveDashboardActor(req, db, config);
+      const actor = await resolveDashboardActor(req, rootDb, config);
       if (!actor) return error(res, 401, 'Not signed in');
       req.staff = actor;
+      req.db = rootDb.forFirm(actor.firmId);
       // State-changing requests must carry a custom header: a cross-site form or image can't add one.
       if (req.method !== 'GET' && req.header(CSRF_HEADER) !== '1') return error(res, 403, 'Missing CSRF header');
       // Read-only (demo) sessions: every write route is refused here, before its body is read, so routes added later
       // inherit the rule.
       if (actor.readOnly && req.method !== 'GET' && req.method !== 'HEAD') {
-        await recordAudit(db, {
+        await recordAudit(req.db, {
           staffId: actor.staffId,
           tool: `dashboard:${writeActionName(req.path)}`,
           input: { method: req.method, path: req.path.slice(0, 200) },
@@ -127,33 +130,56 @@ export function createApiRouter(deps: Deps): Router {
   // Model calls a dashboard request makes (embedding an upload, extracting to decide who may view a file) are
   // recorded as this staff member's.
   const scoped = <T>(req: Request, fn: () => Promise<T>, documentId?: string) =>
-    usageScope({ db, staffId: req.staff!.staffId, source: 'dashboard', documentId }, fn);
+    usageScope({ db: req.db!, staffId: req.staff!.staffId, source: 'dashboard', documentId }, fn);
 
-  const audit = (actor: Actor, tool: string, input: unknown, outcome: 'ok' | 'denied' | 'error', detail?: string) =>
-    recordAudit(db, { staffId: actor.staffId, tool, input, outcome, detail, durationMs: 0 });
+  /**
+   * When a lookup by id finds nothing, was the id another firm's? The caller gets the same "not found" either way
+   * (no way to probe for other firms' ids); the attempt is audited as denied.
+   */
+  const auditIfOtherFirm = async (
+    req: Request,
+    action: string,
+    kind: 'client' | 'document' | 'job',
+    id: string,
+  ): Promise<void> => {
+    if (await belongsToAnotherFirm(req.db!, kind, id)) {
+      await audit(req, `dashboard:${action}`, { [`${kind}Id`]: id }, 'denied', `${kind} of another firm`);
+    }
+  };
 
-  router.get('/me', (req, res) => {
+  const audit = (req: Request, tool: string, input: unknown, outcome: 'ok' | 'denied' | 'error', detail?: string) =>
+    recordAudit(req.db!, { staffId: req.staff!.staffId, tool, input, outcome, detail, durationMs: 0 });
+
+  router.get('/me', async (req, res) => {
+    const db = req.db!;
     const a = req.staff!;
+    const [firm] = await db.query<{ id: string; name: string }>('select id, name from firms where id = $1', [
+      firmOf(db),
+    ]);
     res.json({
       staffId: a.staffId,
       name: a.name,
       email: a.email,
       role: a.role,
       readOnly: a.readOnly,
+      firm: firm ?? { id: a.firmId, name: a.firmId },
       authMode: config.authMode,
     });
   });
 
   router.get('/staff', async (_req, res) => {
     if (config.authMode !== 'dev') return error(res, 404, 'Not available');
-    // The demo visitor isn't a person to switch to; it is reached through "Try the demo".
-    const staff = await db.query<{ email: string; name: string; role: string }>(
-      'select email, name, role from staff where not read_only order by role desc, name',
+    // Dev mode only: everyone in every firm, so a developer can switch firms too. The demo visitor isn't a person
+    // to switch to; it is reached through "Try the demo".
+    const staff = await rootDb.query<{ email: string; name: string; role: string; firm: string }>(
+      `select s.email, s.name, s.role, f.name as firm from staff s join firms f on f.id = s.firm_id
+       where not s.read_only order by s.firm_id = 'firm_northbridge' desc, f.name, s.role desc, s.name`,
     );
     return res.json({ staff });
   });
 
   router.get('/stats', async (req, res) => {
+    const db = req.db!;
     const actor = req.staff!;
     res.json({
       documents: await documentCounts(db),
@@ -163,6 +189,7 @@ export function createApiRouter(deps: Deps): Router {
   });
 
   router.get('/audit', async (req, res) => {
+    const db = req.db!;
     const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 200);
     const before = req.query.before ? Number(req.query.before) : undefined;
     const outcome = ['ok', 'denied', 'error'].includes(String(req.query.outcome))
@@ -174,7 +201,8 @@ export function createApiRouter(deps: Deps): Router {
     );
   });
 
-  router.get('/inbox', async (_req, res) => {
+  router.get('/inbox', async (req, res) => {
+    const db = req.db!;
     const names = await staffNames(db);
     const docs = await listDocumentsByStatus(db, 'inbox', 100);
     res.json({
@@ -190,10 +218,13 @@ export function createApiRouter(deps: Deps): Router {
   });
 
   router.get('/review', async (req, res) => {
+    const db = req.db!;
     const actor = req.staff!;
     const names = await staffNames(db);
     const rows = await db.query<{ id: string; sent_to_review_by: string | null }>(
-      `select id, sent_to_review_by from documents where status = 'review' order by sent_to_review_at desc nulls last`,
+      `select id, sent_to_review_by from documents where status = 'review' and firm_id = $1
+       order by sent_to_review_at desc nulls last`,
+      [firmOf(db)],
     );
     const items = [];
     for (const row of rows) {
@@ -226,19 +257,27 @@ export function createApiRouter(deps: Deps): Router {
   });
 
   router.post('/review/:id/resolve', express.json({ limit: '10kb' }), async (req, res) => {
+    const db = req.db!;
     const actor = req.staff!;
     const input = { documentId: req.params.id, clientId: req.body?.clientId, taxYear: req.body?.taxYear };
     if (actor.role !== 'partner') {
-      await audit(actor, 'dashboard:resolve_review', input, 'denied', 'partners only');
+      await audit(req, 'dashboard:resolve_review', input, 'denied', 'partners only');
       return error(res, 403, 'Only partners can resolve reviews');
     }
     if (typeof input.clientId !== 'string' || !(await canAccessClient(db, actor, input.clientId))) {
+      if (typeof input.clientId === 'string') await auditIfOtherFirm(req, 'resolve_review', 'client', input.clientId);
       return error(res, 400, 'Choose a client');
     }
-    const [client] = await db.query<{ name: string }>('select name from clients where id = $1', [input.clientId]);
+    const [client] = await db.query<{ name: string }>('select name from clients where id = $1 and firm_id = $2', [
+      input.clientId,
+      firmOf(db),
+    ]);
     if (!client) return error(res, 400, 'Unknown client');
     const doc = await getDocument(db, String(req.params.id));
-    if (!doc || doc.status !== 'review') return error(res, 404, 'Not in the review queue');
+    if (!doc || doc.status !== 'review') {
+      if (!doc) await auditIfOtherFirm(req, 'resolve_review', 'document', String(req.params.id));
+      return error(res, 404, 'Not in the review queue');
+    }
     const taxYear =
       Number.isInteger(input.taxYear) && input.taxYear >= 2000 && input.taxYear <= 2100
         ? (input.taxYear as number)
@@ -256,7 +295,7 @@ export function createApiRouter(deps: Deps): Router {
       body: `Filed "${doc.title}" from the review queue (reason: ${doc.reviewReason ?? 'n/a'}).`,
       kind: 'filing',
     });
-    await audit(actor, 'dashboard:resolve_review', input, 'ok', `filed to ${input.clientId}`);
+    await audit(req, 'dashboard:resolve_review', input, 'ok', `filed to ${input.clientId}`);
     return res.json({ ok: true });
   });
 
@@ -264,6 +303,7 @@ export function createApiRouter(deps: Deps): Router {
     '/documents',
     express.raw({ type: Object.keys(SUPPORTED_TYPES), limit: MAX_UPLOAD_BYTES }),
     async (req, res) => {
+      const db = req.db!;
       const actor = req.staff!;
       const mimeType = String(req.headers['content-type'] ?? '')
         .split(';')[0]!
@@ -284,10 +324,10 @@ export function createApiRouter(deps: Deps): Router {
           }),
         );
         const doc = await getDocument(db, result.id);
-        await audit(actor, 'dashboard:upload', { filename, bytes: req.body.length }, 'ok', result.id);
+        await audit(req, 'dashboard:upload', { filename, bytes: req.body.length }, 'ok', result.id);
         return res.json({ id: result.id, title: doc?.title ?? filename, duplicate: result.duplicate });
       } catch (err) {
-        await audit(actor, 'dashboard:upload', { filename }, 'error', err instanceof Error ? err.message : String(err));
+        await audit(req, 'dashboard:upload', { filename }, 'error', err instanceof Error ? err.message : String(err));
         return error(res, 400, 'Could not read that file');
       }
     },
@@ -304,17 +344,18 @@ export function createApiRouter(deps: Deps): Router {
   ): Promise<boolean> => {
     const actor = req.staff!;
     if (actor.role === 'partner') return true;
-    await audit(actor, `dashboard:${action}`, input, 'denied', 'partners only');
+    await audit(req, `dashboard:${action}`, input, 'denied', 'partners only');
     error(res, 403, message);
     return false;
   };
 
   router.post('/batches', express.json({ limit: '1kb' }), async (req, res) => {
+    const db = req.db!;
     const total = Number(req.body?.total);
     if (!(await partnersOnly(req, res, 'create_batch', { total }))) return;
     if (!Number.isInteger(total) || total < 1 || total > 25) return error(res, 400, 'A batch holds 1 to 25 files');
     const id = await createBatch(db, req.staff!.staffId, total);
-    await audit(req.staff!, 'dashboard:create_batch', { total }, 'ok', id);
+    await audit(req, 'dashboard:create_batch', { total }, 'ok', id);
     return res.json({ id });
   });
 
@@ -322,6 +363,7 @@ export function createApiRouter(deps: Deps): Router {
     '/batches/:id/files',
     express.raw({ type: Object.keys(SUPPORTED_TYPES), limit: MAX_UPLOAD_BYTES }),
     async (req, res) => {
+      const db = req.db!;
       const actor = req.staff!;
       const batchId = String(req.params.id);
       const filename = String(req.header('x-filename') ?? '')
@@ -343,8 +385,8 @@ export function createApiRouter(deps: Deps): Router {
       const key = rawKey && /^[\w-]{8,100}$/.test(rawKey) ? `${actor.staffId}:${batchId}:${rawKey}` : null;
       if (rawKey && !key) return error(res, 400, 'Idempotency-Key must be 8 to 100 letters, digits, - or _');
       const [{ n } = { n: 0 }] = await db.query<{ n: number }>(
-        'select count(*)::int as n from jobs where batch_id = $1',
-        [batchId],
+        'select count(*)::int as n from jobs where batch_id = $1 and firm_id = $2',
+        [batchId, firmOf(db)],
       );
       try {
         const existing = key ? await findJobByKey(db, key) : null;
@@ -358,7 +400,7 @@ export function createApiRouter(deps: Deps): Router {
           deferProcessing: true,
         });
         if (result.duplicate) {
-          await audit(actor, 'dashboard:batch_upload', input, 'ok', `duplicate of ${result.id}`);
+          await audit(req, 'dashboard:batch_upload', input, 'ok', `duplicate of ${result.id}`);
           return res.json({ documentId: result.id, jobId: null, duplicate: true });
         }
         const { job } = await enqueue(
@@ -366,16 +408,16 @@ export function createApiRouter(deps: Deps): Router {
           { documentId: result.id, createdBy: actor.staffId, batchId, idempotencyKey: key },
           config.jobs,
         );
-        await audit(actor, 'dashboard:batch_upload', input, 'ok', `${result.id} job ${job.id}`);
+        await audit(req, 'dashboard:batch_upload', input, 'ok', `${result.id} job ${job.id}`);
         return res.json({ documentId: result.id, jobId: job.id, duplicate: false });
       } catch (err) {
-        await audit(actor, 'dashboard:batch_upload', input, 'error', err instanceof Error ? err.message : String(err));
+        await audit(req, 'dashboard:batch_upload', input, 'error', err instanceof Error ? err.message : String(err));
         return error(res, 400, 'Could not store that file');
       }
     },
   );
 
-  const jobView = async (jobs: Awaited<ReturnType<typeof listJobs>>) => {
+  const jobView = async (db: Db, jobs: Awaited<ReturnType<typeof listJobs>>) => {
     const docs = await Promise.all(jobs.map((j) => getDocument(db, j.documentId)));
     return jobs.map((j, i) => {
       const d = docs[i];
@@ -402,51 +444,62 @@ export function createApiRouter(deps: Deps): Router {
   };
 
   router.get('/batches/:id', async (req, res) => {
+    const db = req.db!;
     const batchId = String(req.params.id);
     if (!(await partnersOnly(req, res, 'view_batch', { batchId }))) return;
     const batch = await getBatch(db, batchId);
     if (!batch) return error(res, 404, 'No such batch');
     const jobs = (await listJobs(db, { batchId, limit: 100 })).reverse();
-    return res.json({ ...batch, items: await jobView(jobs) });
+    return res.json({ ...batch, items: await jobView(db, jobs) });
   });
 
   router.get('/jobs', async (req, res) => {
+    const db = req.db!;
     if (!(await partnersOnly(req, res, 'view_jobs', {}))) return;
     const status = req.query.status === 'dead' ? 'dead' : undefined;
-    return res.json({ items: await jobView(await listJobs(db, { status, limit: 50 })) });
+    return res.json({ items: await jobView(db, await listJobs(db, { status, limit: 50 })) });
   });
 
   router.post('/jobs/:id/retry', async (req, res) => {
+    const db = req.db!;
     const jobId = Number(req.params.id);
     if (!(await partnersOnly(req, res, 'retry_job', { jobId }))) return;
     const job = Number.isInteger(jobId) ? await getJob(db, jobId) : null;
-    if (!job || job.status !== 'dead') return error(res, 404, 'No dead job with that id');
+    if (!job || job.status !== 'dead') {
+      if (!job && Number.isInteger(jobId)) await auditIfOtherFirm(req, 'retry_job', 'job', String(jobId));
+      return error(res, 404, 'No dead job with that id');
+    }
     // Only while the document is still waiting in the inbox: if someone filed it by hand meanwhile, leave it.
     if (!(await setProcessing(db, job.documentId, true))) {
       return error(res, 409, 'The document has been handled since; nothing to retry');
     }
     await retryDead(db, job.id);
-    await audit(req.staff!, 'dashboard:retry_job', { jobId }, 'ok', job.documentId);
+    await audit(req, 'dashboard:retry_job', { jobId }, 'ok', job.documentId);
     return res.json({ ok: true });
   });
 
   router.get('/documents/:id/file', async (req, res) => {
+    const db = req.db!;
     const actor = req.staff!;
     const doc = await getDocument(db, String(req.params.id));
-    if (!doc) return error(res, 404, 'Not found');
+    if (!doc) {
+      await auditIfOtherFirm(req, 'view_document', 'document', String(req.params.id));
+      return error(res, 404, 'Not found');
+    }
     const match = await scoped(req, () => ensureMatch(db, services, doc), doc.id);
     const access = await canSeeDocument({ db, actor }, doc, match);
     if (!access.allowed) {
-      await audit(actor, 'dashboard:view_document', { documentId: doc.id }, 'denied', access.detail);
+      await audit(req, 'dashboard:view_document', { documentId: doc.id }, 'denied', access.detail);
       return error(res, 403, access.reason);
     }
-    await audit(actor, 'dashboard:view_document', { documentId: doc.id }, 'ok');
+    await audit(req, 'dashboard:view_document', { documentId: doc.id }, 'ok');
     return sendDocumentFile(res, services, doc);
   });
 
   // LLM usage and estimated cost (partners). Eval runs are separate processes with their own database, so their
   // usage travels in the accuracy reports and is shown next to it.
   router.get('/usage', async (req, res) => {
+    const db = req.db!;
     const days = Math.min(Math.max(Number(req.query.days) || 14, 1), 90);
     if (!(await partnersOnly(req, res, 'view_usage', { days }, 'Only partners can see usage and cost'))) return;
     const evalRuns = [];

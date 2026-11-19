@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { partitionByAccess } from '../../domain/access.js';
 import { getDocument } from '../../domain/documents.js';
 import { computeMatch, ensureExtraction } from '../../domain/intake.js';
-import { canSeeDocument, redactHiddenClients } from '../document-access.js';
+import { canSeeDocument, redactHiddenClients, notFoundAudit } from '../document-access.js';
 import { runTool, type ToolContext } from '../run-tool.js';
 
 export const MatchClientOutput = {
@@ -39,7 +39,11 @@ export function registerMatchClient(server: McpServer, ctx: ToolContext): void {
         const doc = await getDocument(ctx.db, input.documentId);
         if (!doc) {
           const message = `No document with id ${input.documentId}.`;
-          return { outcome: 'ok', text: message, structured: { status: 'not_found', message } };
+          return {
+            ...(await notFoundAudit(ctx, 'document', input.documentId)),
+            text: message,
+            structured: { status: 'not_found', message },
+          };
         }
         if (doc.status === 'filed') {
           const access = await canSeeDocument(ctx, doc, null);

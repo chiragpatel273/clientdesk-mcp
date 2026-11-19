@@ -16,7 +16,7 @@ import { usageSummary } from '../src/domain/usage.js';
 import { createHttpApp } from '../src/http.js';
 import { enqueue } from '../src/jobs/queue.js';
 import { createWorker } from '../src/jobs/worker.js';
-import { call, connectAs, demoDb, demoDbWithDocuments, lastAudit, testServices, TOM } from './helpers.js';
+import { call, connectAs, demoDb, demoDbWithDocuments, lastAudit, testServices, TOM, nb } from './helpers.js';
 
 type Recorded = LlmCall & { costUsd: number };
 const input = { filename: 'inv.pdf', pages: ['INVOICE\nBilled to: Acme Ltd'], textLayer: true, pdf: null };
@@ -59,6 +59,7 @@ describe('recording model calls', () => {
     ).resolves.toBeUndefined();
     // A database that fails every query: the call still resolves.
     const db = {
+      firmId: 'firm_northbridge',
       query: async () => {
         throw new Error('connection lost');
       },
@@ -203,14 +204,14 @@ describe('who and what a call is recorded against', () => {
   it('a batch job: the uploader, source job, the document and the job', async () => {
     const services = testServices();
     const db = await demoDb();
-    const { id } = await ingestDocument(db, services, {
+    const { id } = await ingestDocument(nb(db), services, {
       bytes: await renderTextPdf('x', ['INVOICE\nInvoice number: Q-1\nBill to: Acme Ltd\nTotal due: $9.00']),
       mimeType: 'application/pdf',
       filename: 'x.pdf',
       uploadedBy: 'st_maya',
       deferProcessing: true,
     });
-    const { job } = await enqueue(db, { documentId: id, createdBy: 'st_maya' }, { maxAttempts: 3 });
+    const { job } = await enqueue(nb(db), { documentId: id, createdBy: 'st_maya' }, { maxAttempts: 3 });
     await createWorker({ db, services, config: loadConfig({ NODE_ENV: 'test' }).jobs }).runUntilIdle();
     const rows = await llmRows(db);
     expect(rows.length).toBeGreaterThanOrEqual(2); // index + extract (+ re-index when filed)
@@ -219,7 +220,7 @@ describe('who and what a call is recorded against', () => {
     ).toBe(true);
     expect(rows.map((r) => r.operation)).toContain('extract');
 
-    const summary = await usageSummary(db, 14);
+    const summary = await usageSummary(nb(db), 14);
     expect(summary.totals.calls).toBe(rows.length);
     expect(summary.totals.costUsd).toBe(0);
     expect(summary.byModel.map((m) => m.model).sort()).toEqual(['local-hash-v1', 'rules-v1']);
@@ -230,7 +231,7 @@ describe('who and what a call is recorded against', () => {
   it('summarises cost per filed document, escalation and error rates', async () => {
     const db = await demoDb();
     const add = (c: Partial<LlmCall>) =>
-      usageScope({ db, source: 'mcp' }, () =>
+      usageScope({ db: nb(db), source: 'mcp' }, () =>
         reportCall({
           operation: 'extract',
           provider: 'anthropic',
@@ -246,7 +247,7 @@ describe('who and what a call is recorded against', () => {
     await add({});
     await add({ model: 'claude-opus-5-5', escalated: true, latencyMs: 400 });
     await add({ success: false, inputTokens: 0 });
-    const s = await usageSummary(db, 7);
+    const s = await usageSummary(nb(db), 7);
     expect(s.totals).toMatchObject({
       calls: 4,
       costUsd: 0.1 + 0.1 + 4,

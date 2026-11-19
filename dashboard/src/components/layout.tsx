@@ -86,6 +86,7 @@ function DevUserSwitcher() {
         {list.map((s) => (
           <option key={s.email} value={s.email}>
             {s.name} · {s.role === 'partner' ? 'Partner' : 'Assistant'}
+            {s.firm && s.firm !== me.firm.name ? ` · ${s.firm}` : ''}
           </option>
         ))}
         {options.data?.demoLogin && <option value={DEMO_OPTION}>Try the demo (read-only)</option>}
@@ -152,7 +153,9 @@ export function Layout() {
             <span className="hidden text-muted-foreground/60 sm:inline" aria-hidden>
               /
             </span>
-            <span className="hidden truncate text-sm text-muted-foreground sm:inline">Northbridge Advisory</span>
+            <span className="hidden truncate text-sm text-muted-foreground sm:inline" data-testid="firm-name">
+              {me.firm.name}
+            </span>
           </div>
           <div className="flex items-center gap-1 sm:gap-2">
             {me.readOnly ? <DemoVisitor /> : me.authMode === 'dev' ? <DevUserSwitcher /> : <SignedInUser />}
@@ -196,7 +199,7 @@ export function Layout() {
         <Outlet />
       </main>
       <footer className="mx-auto max-w-7xl px-4 pb-8 text-xs text-muted-foreground sm:px-6">
-        Demo data: Northbridge Advisory and everyone in it are fictional.
+        Demo data: every firm, client and person here is fictional.
       </footer>
     </div>
   );

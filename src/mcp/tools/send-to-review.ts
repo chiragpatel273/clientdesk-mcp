@@ -1,6 +1,7 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { getDocument, markForReview } from '../../domain/documents.js';
+import { notFoundAudit } from '../document-access.js';
 import { runTool, type ToolContext } from '../run-tool.js';
 
 export const SendToReviewOutput = {
@@ -34,7 +35,11 @@ export function registerSendToReview(server: McpServer, ctx: ToolContext): void 
           const doc = await getDocument(ctx.db, input.documentId);
           if (!doc) {
             const message = `No document with id ${input.documentId}.`;
-            return { outcome: 'ok', text: message, structured: { status: 'not_found', message } };
+            return {
+              ...(await notFoundAudit(ctx, 'document', input.documentId)),
+              text: message,
+              structured: { status: 'not_found', message },
+            };
           }
           if (doc.status === 'review') {
             const message = 'This document is already in the review queue.';

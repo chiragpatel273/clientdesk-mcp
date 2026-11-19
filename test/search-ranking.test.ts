@@ -20,7 +20,7 @@ import {
 } from '../src/domain/documents.js';
 import { rerankPages, searchDocuments } from '../src/domain/search.js';
 import { createHttpApp } from '../src/http.js';
-import { demoDb, testServices } from './helpers.js';
+import { demoDb, testServices, nb } from './helpers.js';
 
 const STATEMENT = [
   [
@@ -122,7 +122,7 @@ describe('search with v2 passages', () => {
 
   beforeAll(async () => {
     db = await demoDb();
-    await ingestDocument(db, services, {
+    await ingestDocument(nb(db), services, {
       id: 'doc_stmt',
       bytes: await renderTextPdf('statement', STATEMENT),
       mimeType: 'application/pdf',
@@ -140,7 +140,7 @@ describe('search with v2 passages', () => {
 
   it('cites page 2 for a paraphrased question about the closing balance', async () => {
     const passages = await searchDocuments(
-      db,
+      nb(db),
       services.embedder,
       'What did Lakeside Dental Group have left in the Meridian Trust Bank account ending 9950 at the end of the period?',
       { allowedClientIds: 'all', limit: 5 },
@@ -149,7 +149,7 @@ describe('search with v2 passages', () => {
   });
 
   it('still returns nothing outside the caller’s clients', async () => {
-    const passages = await searchDocuments(db, services.embedder, 'closing balance Lakeside', {
+    const passages = await searchDocuments(nb(db), services.embedder, 'closing balance Lakeside', {
       allowedClientIds: ['cl_acme'],
       limit: 5,
     });
@@ -157,22 +157,22 @@ describe('search with v2 passages', () => {
   });
 
   it('rebuilds stale passages on start-up: another embedder or an older format', async () => {
-    expect(await reindexStale(db, services.embedder)).toBe(0);
+    expect(await reindexStale(nb(db), services.embedder)).toBe(0);
 
     await db.query(`update document_chunks set passage_version = 1 where document_id = 'doc_stmt'`);
-    expect(await reindexStale(db, services.embedder)).toBe(1);
+    expect(await reindexStale(nb(db), services.embedder)).toBe(1);
     const [row] = await db.query<{ v: number }>(
       `select min(passage_version)::int as v from document_chunks where document_id = 'doc_stmt'`,
     );
     expect(row?.v).toBe(PASSAGE_VERSION);
 
     const other: Embedder = { model: 'other-model', embed: (texts, kind) => localEmbedder().embed(texts, kind) };
-    expect(await reindexStale(db, other)).toBe(1);
+    expect(await reindexStale(nb(db), other)).toBe(1);
     const models = await db.query<{ embedding_model: string }>(
       `select distinct embedding_model from document_chunks where document_id = 'doc_stmt'`,
     );
     expect(models).toEqual([{ embedding_model: 'other-model' }]);
-    expect((await getDocument(db, 'doc_stmt'))?.extraction?.docType).toBe('bank_statement');
+    expect((await getDocument(nb(db), 'doc_stmt'))?.extraction?.docType).toBe('bank_statement');
   });
 });
 

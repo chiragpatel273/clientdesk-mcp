@@ -22,7 +22,7 @@ import { usageScope, type LlmCall } from '../src/ai/usage.js';
 import { createDb } from '../src/db/index.js';
 import { migrate, projectRoot } from '../src/db/migrate.js';
 import { CLIENTS, CONTACTS } from '../src/demo/firm.js';
-import { seedDemoFirm } from '../src/demo/seed.js';
+import { ensureFirms, NORTHBRIDGE, seedDemoFirm } from '../src/demo/seed.js';
 import { renderTextPdf } from '../src/documents/pdf-render.js';
 import { describeDocument, ingestDocument } from '../src/domain/documents.js';
 import { matchClients } from '../src/domain/matching.js';
@@ -143,8 +143,11 @@ if (remote) process.stderr.write('\n');
 
 const { searches, wide } = await usageScope(collect, async () => {
   console.error(`Indexing for search with ${embedder.model}...`);
-  const db = await createDb('pglite://memory');
-  await migrate(db);
+  const store = await createDb('pglite://memory');
+  await migrate(store);
+  await ensureFirms(store);
+  // The eval measures Northbridge's search: every query runs scoped to that firm, as in production.
+  const db = store.forFirm(NORTHBRIDGE.id);
   await seedDemoFirm(db);
   const files = memoryFileStore();
   for (const doc of DOCUMENTS) {
@@ -197,7 +200,7 @@ const { searches, wide } = await usageScope(collect, async () => {
       });
     }
   }
-  await db.close();
+  await store.close();
   return { searches, wide };
 });
 

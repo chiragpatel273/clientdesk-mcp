@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
-import type { Db } from '../db/index.js';
+import { firmOf, type Db } from '../db/index.js';
 import { estimateCost } from './prices.js';
 
 /**
@@ -58,9 +58,10 @@ export async function reportCall(call: LlmCall): Promise<void> {
   try {
     await scope.db.query(
       `insert into llm_calls (staff_id, source, operation, provider, model, input_tokens, output_tokens, tokens_estimated,
-                              cost_usd, latency_ms, escalated, success, error, document_id, job_id)
+                              cost_usd, latency_ms, escalated, success, error, document_id, job_id, firm_id)
        values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
-               (select id from documents where id = $14), (select id from jobs where id = $15))`,
+               (select id from documents where id = $14 and firm_id = $16), (select id from jobs where id = $15 and firm_id = $16),
+               $16)`,
       [
         scope.staffId ?? null,
         scope.source ?? 'script',
@@ -77,6 +78,7 @@ export async function reportCall(call: LlmCall): Promise<void> {
         call.error ? call.error.slice(0, 80) : null,
         scope.documentId ?? null,
         scope.jobId ?? null,
+        firmOf(scope.db),
       ],
     );
   } catch (error) {

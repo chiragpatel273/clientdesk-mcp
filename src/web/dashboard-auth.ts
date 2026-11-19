@@ -116,7 +116,7 @@ export function mountDashboardAuth(app: Express, deps: { db: Db; config: Config;
       return res.status(503).json({ error: 'The demo visitor is not set up. Start the server with SEED_DEMO=1.' });
     }
     await issueSession(res, config.sessionSecret, actor.staffId, secure, { demo: true });
-    await recordAudit(db, {
+    await recordAudit(db.forFirm(actor.firmId), {
       staffId: actor.staffId,
       tool: 'auth:demo_login',
       input: null,

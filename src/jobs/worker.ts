@@ -44,10 +44,11 @@ export function createWorker(deps: WorkerDeps): Worker {
     // A permanent failure uses up the remaining attempts, so it is dead-lettered now instead of retried.
     const result = await fail(db, permanent ? { ...job, attempts: job.maxAttempts } : job, id, message, config);
     const denied = error instanceof PermanentJobError && error.denied;
-    await auditStep(db, job, result === 'dead' ? 'dead_letter' : 'retry', denied ? 'denied' : 'error', message);
+    const firmDb = db.forFirm(job.firmId);
+    await auditStep(firmDb, job, result === 'dead' ? 'dead_letter' : 'retry', denied ? 'denied' : 'error', message);
     if (result === 'dead') {
       // People take over: the document goes back to the inbox, where Claude or a partner can process it by hand.
-      await setProcessing(db, job.documentId, false);
+      await setProcessing(firmDb, job.documentId, false);
       log(`Job ${job.id} dead-lettered after ${job.attempts} attempts: ${message}`);
     }
   }
@@ -60,13 +61,16 @@ export function createWorker(deps: WorkerDeps): Worker {
       await handleFailure(job, new Error('The worker running this job stopped responding too many times.'));
       return true;
     }
+    // The step touches only the job's firm: scoped handle (domain filter + row-level security).
+    const firmDb = db.forFirm(job.firmId);
     try {
       const result = await usageScope(
-        { db, staffId: job.createdBy, source: 'job', documentId: job.documentId, jobId: job.id },
-        () => runIntakeStep(db, services, job),
+        { db: firmDb, staffId: job.createdBy, source: 'job', documentId: job.documentId, jobId: job.id },
+        () => runIntakeStep(firmDb, services, job),
       );
-      if (await advance(db, job, id, result.step, result.done))
-        await auditStep(db, job, result.step, 'ok', result.detail);
+      if (await advance(db, job, id, result.step, result.done)) {
+        await auditStep(firmDb, job, result.step, 'ok', result.detail);
+      }
     } catch (error) {
       await handleFailure(job, error);
     }

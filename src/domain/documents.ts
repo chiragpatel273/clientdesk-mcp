@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { toVectorLiteral, type Embedder } from '../ai/embeddings.js';
 import { FIELDS, fieldValue, normalizeAmount, normalizeDate, type DocType, type Extraction } from '../ai/extraction.js';
-import type { Db } from '../db/index.js';
+import { firmOf, type Db } from '../db/index.js';
 import { extractText } from '../documents/text.js';
 import type { AppServices } from '../services.js';
 import type { MatchResult } from './matching.js';
@@ -89,15 +89,15 @@ function toRecord(r: Row): DocumentRecord {
 }
 
 export async function getDocument(db: Db, id: string): Promise<DocumentRecord | null> {
-  const [row] = await db.query<Row>(`${SELECT} where d.id = $1`, [id]);
+  const [row] = await db.query<Row>(`${SELECT} where d.id = $1 and d.firm_id = $2`, [id, firmOf(db)]);
   return row ? toRecord(row) : null;
 }
 
 export async function listDocumentsByStatus(db: Db, status: DocumentStatus, limit = 50): Promise<DocumentRecord[]> {
-  const rows = await db.query<Row>(`${SELECT} where d.status = $1 order by d.received_at desc, d.id limit $2`, [
-    status,
-    limit,
-  ]);
+  const rows = await db.query<Row>(
+    `${SELECT} where d.firm_id = $3 and d.status = $1 order by d.received_at desc, d.id limit $2`,
+    [status, limit, firmOf(db)],
+  );
   return rows.map(toRecord);
 }
 
@@ -170,7 +170,12 @@ export async function ingestDocument(
   if (input.bytes.byteLength > MAX_UPLOAD_BYTES) throw new Error('File too large');
 
   const sha = createHash('sha256').update(input.bytes).digest('hex');
-  const [existing] = await db.query<{ id: string }>('select id from documents where content_sha256 = $1', [sha]);
+  // Per firm: another firm holding the same file must not show up as a duplicate.
+  const firmId = firmOf(db);
+  const [existing] = await db.query<{ id: string }>(
+    'select id from documents where content_sha256 = $1 and firm_id = $2',
+    [sha, firmId],
+  );
   if (existing) return { id: existing.id, duplicate: true };
 
   const id = input.id ?? `doc_${randomBytes(6).toString('hex')}`;
@@ -183,10 +188,10 @@ export async function ingestDocument(
   await db.query(
     `insert into documents (id, client_id, tax_year, doc_type, title, status, storage_key, page_count, received_at,
                             filed_at, filed_by, source_filename, mime_type, content_sha256, uploaded_by, text_layer, page_text,
-                            extraction, extracted_at)
+                            extraction, extracted_at, firm_id)
      values ($1, $2, $3, $4, $5, $6, $7, $8, coalesce($9::timestamptz, now()),
              case when $6 = 'filed' then coalesce($9::timestamptz, now()) end, $10, $11, $12, $13, $14, $15, $16::jsonb,
-             $17::jsonb, case when $17::jsonb is not null then now() end)`,
+             $17::jsonb, case when $17::jsonb is not null then now() end, $18)`,
     [
       id,
       input.filed?.clientId ?? null,
@@ -205,6 +210,7 @@ export async function ingestDocument(
       textLayer,
       JSON.stringify(pages),
       input.extraction ? JSON.stringify(input.extraction) : null,
+      firmId,
     ],
   );
   if (!input.deferProcessing) await reindexDocument(db, services.embedder, id);
@@ -218,12 +224,10 @@ export async function readStoredText(db: Db, files: AppServices['files'], id: st
   const bytes = await files.get(doc.storageKey);
   if (!bytes) throw new Error('Stored file not found');
   const { pages, textLayer } = await extractText(bytes, doc.mimeType);
-  await db.query('update documents set page_text = $2::jsonb, page_count = $3, text_layer = $4 where id = $1', [
-    id,
-    JSON.stringify(pages),
-    pages.length,
-    textLayer,
-  ]);
+  await db.query(
+    'update documents set page_text = $2::jsonb, page_count = $3, text_layer = $4 where id = $1 and firm_id = $5',
+    [id, JSON.stringify(pages), pages.length, textLayer, firmOf(db)],
+  );
   return { pages: pages.length };
 }
 
@@ -322,12 +326,24 @@ export async function reindexDocument(db: Db, embedder: Embedder, id: string): P
         'document',
       )
     : [];
-  await db.query('delete from document_chunks where document_id = $1', [id]);
+  const firmId = firmOf(db);
+  await db.query('delete from document_chunks where document_id = $1 and firm_id = $2', [id, firmId]);
   for (const [i, chunk] of chunks.entries()) {
     await db.query(
-      `insert into document_chunks (id, document_id, page, chunk_index, content, embedding, embedding_model, passage_version)
-       values ($1, $2, $3, $4, $5, $6::vector, $7, $8)`,
-      [`${id}_c${i}`, id, chunk.page, i, chunk.content, toVectorLiteral(vectors[i]!), embedder.model, PASSAGE_VERSION],
+      `insert into document_chunks (id, document_id, page, chunk_index, content, embedding, embedding_model,
+                                    passage_version, firm_id)
+       values ($1, $2, $3, $4, $5, $6::vector, $7, $8, $9)`,
+      [
+        `${id}_c${i}`,
+        id,
+        chunk.page,
+        i,
+        chunk.content,
+        toVectorLiteral(vectors[i]!),
+        embedder.model,
+        PASSAGE_VERSION,
+        firmId,
+      ],
     );
   }
 }
@@ -343,11 +359,11 @@ export async function reindexStale(
 ): Promise<number> {
   const rows = await db.query<{ id: string }>(
     `select d.id from documents d
-     where $1::boolean
+     where d.firm_id = $4 and ($1::boolean
         or exists (select 1 from document_chunks ch
-                   where ch.document_id = d.id and (ch.embedding_model is distinct from $2 or ch.passage_version < $3))
+                   where ch.document_id = d.id and (ch.embedding_model is distinct from $2 or ch.passage_version < $3)))
      order by d.received_at, d.id`,
-    [options.all ?? false, embedder.model, PASSAGE_VERSION],
+    [options.all ?? false, embedder.model, PASSAGE_VERSION, firmOf(db)],
   );
   for (const [i, row] of rows.entries()) {
     await reindexDocument(db, embedder, row.id);
@@ -392,19 +408,26 @@ export async function retitleAndReindex(
   const doc = await getDocument(db, id);
   if (!doc) return;
   const title = extraction ? describeDocument(extraction) : null;
-  if (title && hasFilenameTitle(doc)) await db.query('update documents set title = $2 where id = $1', [id, title]);
+  if (title && hasFilenameTitle(doc)) {
+    await db.query('update documents set title = $2 where id = $1 and firm_id = $3', [id, title, firmOf(db)]);
+  }
   await reindexDocument(db, embedder, id);
 }
 
 export async function saveExtraction(db: Db, id: string, extraction: Extraction): Promise<void> {
-  await db.query('update documents set extraction = $2::jsonb, extracted_at = now() where id = $1', [
+  await db.query('update documents set extraction = $2::jsonb, extracted_at = now() where id = $1 and firm_id = $3', [
     id,
     JSON.stringify(extraction),
+    firmOf(db),
   ]);
 }
 
 export async function saveMatch(db: Db, id: string, match: MatchResult): Promise<void> {
-  await db.query('update documents set match = $2::jsonb where id = $1', [id, JSON.stringify(match)]);
+  await db.query('update documents set match = $2::jsonb where id = $1 and firm_id = $3', [
+    id,
+    JSON.stringify(match),
+    firmOf(db),
+  ]);
 }
 
 /**
@@ -419,8 +442,8 @@ export async function markFiled(
   const rows = await db.query<{ id: string }>(
     `update documents
      set client_id = $2, tax_year = $3, doc_type = $4, status = 'filed', filed_at = now(), filed_by = $5, review_reason = null
-     where id = $1 and status = any($6::text[]) returning id`,
-    [input.id, input.clientId, input.taxYear, input.docType, input.staffId, from],
+     where id = $1 and firm_id = $7 and status = any($6::text[]) returning id`,
+    [input.id, input.clientId, input.taxYear, input.docType, input.staffId, from, firmOf(db)],
   );
   return rows.length === 1;
 }
@@ -432,8 +455,8 @@ export async function markForReview(
 ): Promise<boolean> {
   const rows = await db.query<{ id: string }>(
     `update documents set status = 'review', review_reason = $2, sent_to_review_by = $3, sent_to_review_at = now()
-     where id = $1 and status = any($4::text[]) returning id`,
-    [input.id, input.reason, input.staffId, from],
+     where id = $1 and firm_id = $5 and status = any($4::text[]) returning id`,
+    [input.id, input.reason, input.staffId, from, firmOf(db)],
   );
   return rows.length === 1;
 }
@@ -441,15 +464,16 @@ export async function markForReview(
 /** Moves a document between the background job and the inbox (a dead job hands it to people; a retry takes it back). */
 export async function setProcessing(db: Db, id: string, processing: boolean): Promise<boolean> {
   const rows = await db.query<{ id: string }>(
-    `update documents set status = $2 where id = $1 and status = $3 returning id`,
-    [id, processing ? 'processing' : 'inbox', processing ? 'inbox' : 'processing'],
+    `update documents set status = $2 where id = $1 and firm_id = $4 and status = $3 returning id`,
+    [id, processing ? 'processing' : 'inbox', processing ? 'inbox' : 'processing', firmOf(db)],
   );
   return rows.length === 1;
 }
 
 export async function documentCounts(db: Db): Promise<Record<DocumentStatus, number>> {
   const rows = await db.query<{ status: DocumentStatus; n: number }>(
-    'select status, count(*)::int as n from documents group by status',
+    'select status, count(*)::int as n from documents where firm_id = $1 group by status',
+    [firmOf(db)],
   );
   const counts: Record<DocumentStatus, number> = { processing: 0, inbox: 0, review: 0, filed: 0 };
   for (const r of rows) counts[r.status] = Number(r.n);

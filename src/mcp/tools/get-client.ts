@@ -2,6 +2,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { partitionByAccess } from '../../domain/access.js';
 import { findClients, getClientDetail, type ClientDetail } from '../../domain/clients.js';
+import { notFoundAudit } from '../document-access.js';
 import { runTool, type ToolContext } from '../run-tool.js';
 
 const ClientRefSchema = z.object({ id: z.string(), name: z.string() });
@@ -93,8 +94,9 @@ export function registerGetClient(server: McpServer, ctx: ToolContext): void {
       runTool<Output>(ctx, 'get_client', { client: query }, async () => {
         const matches = await findClients(ctx.db, query);
         if (matches.length === 0) {
+          // Another firm's client id is answered exactly like a missing one, but audited as denied.
           return {
-            outcome: 'ok',
+            ...(await notFoundAudit(ctx, 'client', query)),
             text: `No client matches "${query}".`,
             structured: { status: 'not_found', message: `No client matches "${query}".` },
           };

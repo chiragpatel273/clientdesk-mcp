@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { FIELDS } from '../../ai/extraction.js';
 import { getDocument } from '../../domain/documents.js';
 import { computeMatch, ensureExtraction } from '../../domain/intake.js';
-import { canSeeDocument } from '../document-access.js';
+import { canSeeDocument, notFoundAudit } from '../document-access.js';
 import { runTool, type ToolContext } from '../run-tool.js';
 
 export const ExtractDocumentOutput = {
@@ -43,7 +43,11 @@ export function registerExtractDocument(server: McpServer, ctx: ToolContext): vo
         const doc = await getDocument(ctx.db, input.documentId);
         if (!doc) {
           const message = `No document with id ${input.documentId}.`;
-          return { outcome: 'ok', text: message, structured: { status: 'not_found', message } };
+          return {
+            ...(await notFoundAudit(ctx, 'document', input.documentId)),
+            text: message,
+            structured: { status: 'not_found', message },
+          };
         }
         // Filed documents: check access before reading anything.
         if (doc.status === 'filed') {

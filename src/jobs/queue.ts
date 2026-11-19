@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import type { JobsConfig } from '../config.js';
-import type { Db } from '../db/index.js';
+import { firmOf, type Db } from '../db/index.js';
 
 /**
  * A job queue in Postgres. One row per document; `step` is the last step completed, `status` where the job is:
@@ -11,6 +11,10 @@ import type { Db } from '../db/index.js';
  *
  * Claiming is one statement: `UPDATE … WHERE id = (SELECT … FOR UPDATE SKIP LOCKED LIMIT 1)`. Concurrent workers
  * skip rows another transaction has locked, so a job is never taken twice; no Redis, no extra service.
+ *
+ * Firms: the queue is shared infrastructure, so claiming, advancing and failing run on the unscoped (owner) handle
+ * by job id. Everything a job does to firm data runs on `db.forFirm(job.firmId)`. Enqueueing, listing and retrying
+ * (dashboard) take a firm-scoped handle and only ever see that firm's jobs.
  */
 
 export const STEPS = ['stored', 'text_extracted', 'embedded', 'fields_extracted', 'matched'] as const;
@@ -19,6 +23,7 @@ export type JobStatus = 'queued' | 'running' | 'done' | 'dead';
 
 export interface Job {
   id: number;
+  firmId: string;
   kind: 'intake';
   batchId: string | null;
   documentId: string;
@@ -34,6 +39,7 @@ export interface Job {
 
 type Row = {
   id: number | string;
+  firm_id: string;
   kind: 'intake';
   batch_id: string | null;
   document_id: string;
@@ -47,12 +53,13 @@ type Row = {
   updated_at: string;
 };
 
-const COLUMNS = `id, kind, batch_id, document_id, created_by, step, status, attempts, max_attempts, last_error,
+const COLUMNS = `id, firm_id, kind, batch_id, document_id, created_by, step, status, attempts, max_attempts, last_error,
   to_char(run_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as run_at,
   to_char(updated_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as updated_at`;
 
 const toJob = (r: Row): Job => ({
   id: Number(r.id),
+  firmId: r.firm_id,
   kind: r.kind,
   batchId: r.batch_id,
   documentId: r.document_id,
@@ -67,12 +74,15 @@ const toJob = (r: Row): Job => ({
 });
 
 export async function getJob(db: Db, id: number): Promise<Job | null> {
-  const [row] = await db.query<Row>(`select ${COLUMNS} from jobs where id = $1`, [id]);
+  const [row] = await db.query<Row>(`select ${COLUMNS} from jobs where id = $1 and firm_id = $2`, [id, firmOf(db)]);
   return row ? toJob(row) : null;
 }
 
 export async function findJobByKey(db: Db, idempotencyKey: string): Promise<Job | null> {
-  const [row] = await db.query<Row>(`select ${COLUMNS} from jobs where idempotency_key = $1`, [idempotencyKey]);
+  const [row] = await db.query<Row>(`select ${COLUMNS} from jobs where idempotency_key = $1 and firm_id = $2`, [
+    idempotencyKey,
+    firmOf(db),
+  ]);
   return row ? toJob(row) : null;
 }
 
@@ -86,11 +96,18 @@ export async function enqueue(
   config: Pick<JobsConfig, 'maxAttempts'>,
 ): Promise<{ job: Job; created: boolean }> {
   const [row] = await db.query<Row>(
-    `insert into jobs (kind, batch_id, document_id, created_by, idempotency_key, max_attempts)
-     values ('intake', $1, $2, $3, $4, $5)
+    `insert into jobs (kind, batch_id, document_id, created_by, idempotency_key, max_attempts, firm_id)
+     values ('intake', $1, $2, $3, $4, $5, $6)
      on conflict (idempotency_key) do nothing
      returning ${COLUMNS}`,
-    [input.batchId ?? null, input.documentId, input.createdBy, input.idempotencyKey ?? null, config.maxAttempts],
+    [
+      input.batchId ?? null,
+      input.documentId,
+      input.createdBy,
+      input.idempotencyKey ?? null,
+      config.maxAttempts,
+      firmOf(db),
+    ],
   );
   if (row) return { job: toJob(row), created: true };
   const existing = await findJobByKey(db, input.idempotencyKey!);
@@ -162,8 +179,8 @@ export async function fail(
 export async function retryDead(db: Db, id: number): Promise<Job | null> {
   const [row] = await db.query<Row>(
     `update jobs set status = 'queued', attempts = 0, run_at = now(), last_error = null, updated_at = now()
-     where id = $1 and status = 'dead' returning ${COLUMNS}`,
-    [id],
+     where id = $1 and firm_id = $2 and status = 'dead' returning ${COLUMNS}`,
+    [id, firmOf(db)],
   );
   return row ? toJob(row) : null;
 }
@@ -174,16 +191,21 @@ export async function listJobs(
 ): Promise<Job[]> {
   const rows = await db.query<Row>(
     `select ${COLUMNS} from jobs
-     where ($1::text is null or batch_id = $1) and ($2::text is null or status = $2)
+     where firm_id = $4 and ($1::text is null or batch_id = $1) and ($2::text is null or status = $2)
      order by id desc limit $3`,
-    [filter.batchId ?? null, filter.status ?? null, filter.limit ?? 100],
+    [filter.batchId ?? null, filter.status ?? null, filter.limit ?? 100, firmOf(db)],
   );
   return rows.map(toJob);
 }
 
 export async function createBatch(db: Db, createdBy: string, total: number): Promise<string> {
   const id = `bat_${randomBytes(6).toString('hex')}`;
-  await db.query('insert into batches (id, created_by, total) values ($1, $2, $3)', [id, createdBy, total]);
+  await db.query('insert into batches (id, created_by, total, firm_id) values ($1, $2, $3, $4)', [
+    id,
+    createdBy,
+    total,
+    firmOf(db),
+  ]);
   return id;
 }
 
@@ -193,8 +215,8 @@ export async function getBatch(
 ): Promise<{ id: string; createdBy: string; createdAt: string; total: number } | null> {
   const [row] = await db.query<{ id: string; created_by: string; created_at: string; total: number }>(
     `select id, created_by, to_char(created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as created_at, total
-     from batches where id = $1`,
-    [id],
+     from batches where id = $1 and firm_id = $2`,
+    [id, firmOf(db)],
   );
   return row ? { id: row.id, createdBy: row.created_by, createdAt: row.created_at, total: Number(row.total) } : null;
 }

@@ -13,6 +13,7 @@ import type { OAuthSetup } from './auth/oauth.js';
 import type { Config } from './config.js';
 import type { Db } from './db/index.js';
 import { projectRoot } from './db/migrate.js';
+import { belongsToAnotherFirm } from './domain/access.js';
 import { recordAudit } from './domain/audit.js';
 import { getDocument } from './domain/documents.js';
 import { findActorByEmail, findActorById } from './domain/staff.js';
@@ -138,7 +139,8 @@ export function createHttpApp(deps: HttpDeps): Express {
       jsonRpcError(res, result.status, -32001, result.message);
       return;
     }
-    const server = createMcpServer({ db, actor: result.actor, services });
+    // Every query this request makes runs scoped to the caller's firm (domain filter + row-level security).
+    const server = createMcpServer({ db: db.forFirm(result.actor.firmId), actor: result.actor, services });
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     res.on('close', () => {
       void transport.close();
@@ -168,16 +170,32 @@ export function createHttpApp(deps: HttpDeps): Express {
       return;
     }
     const actor = await findActorById(db, staffId);
-    const doc = await getDocument(db, documentId);
-    if (!actor || !doc) {
+    if (!actor) {
       res.status(404).type('text/plain').send('Document not found.');
       return;
     }
-    const match = await usageScope({ db, staffId: actor.staffId, source: 'mcp', documentId }, () =>
-      ensureMatch(db, services, doc),
+    const firmDb = db.forFirm(actor.firmId);
+    const doc = await getDocument(firmDb, documentId);
+    if (!doc) {
+      // Another firm's document looks exactly like a missing one, but the attempt is recorded.
+      if (await belongsToAnotherFirm(firmDb, 'document', documentId)) {
+        await recordAudit(firmDb, {
+          staffId: actor.staffId,
+          tool: 'download_document',
+          input: { documentId },
+          outcome: 'denied',
+          detail: 'document of another firm',
+          durationMs: 0,
+        });
+      }
+      res.status(404).type('text/plain').send('Document not found.');
+      return;
+    }
+    const match = await usageScope({ db: firmDb, staffId: actor.staffId, source: 'mcp', documentId }, () =>
+      ensureMatch(firmDb, services, doc),
     );
-    const access = await canSeeDocument({ db, actor }, doc, match);
-    await recordAudit(db, {
+    const access = await canSeeDocument({ db: firmDb, actor }, doc, match);
+    await recordAudit(firmDb, {
       staffId: actor.staffId,
       tool: 'download_document',
       input: { documentId },

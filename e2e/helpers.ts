@@ -4,7 +4,7 @@ export const MAYA = 'maya@northbridge.example';
 export const TOM = 'tom@northbridge.example';
 
 /** Signs in through the dev user picker (AUTH_MODE=dev), the way a developer would. */
-export async function signInAs(page: Page, name: 'Maya Rao' | 'Tom Lindqvist' | 'Ana Costa') {
+export async function signInAs(page: Page, name: 'Maya Rao' | 'Tom Lindqvist' | 'Ana Costa' | 'Lena Ortiz') {
   await page.goto('/dashboard/');
   const picker = page.locator('#dev-user');
   await expect(picker).toBeVisible();

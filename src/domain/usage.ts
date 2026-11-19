@@ -1,4 +1,4 @@
-import type { Db } from '../db/index.js';
+import { firmOf, type Db } from '../db/index.js';
 
 export interface UsageSummary {
   days: number;
@@ -36,7 +36,9 @@ const n = (v: unknown) => Number(v ?? 0);
 
 /** LLM usage over the last `days` days (UTC), for the partners' Usage page. */
 export async function usageSummary(db: Db, days: number): Promise<UsageSummary> {
-  const since = `now() - make_interval(days => $1)`;
+  // $1: days, $2: the firm.
+  const since = `now() - make_interval(days => $1) and firm_id = $2`;
+  const params = [days, firmOf(db)];
   const [t] = await db.query<Record<string, unknown>>(
     `select count(*)::int as calls, coalesce(sum(input_tokens), 0)::bigint as input_tokens,
             coalesce(sum(output_tokens), 0)::bigint as output_tokens, coalesce(sum(cost_usd), 0)::float8 as cost,
@@ -46,29 +48,29 @@ export async function usageSummary(db: Db, days: number): Promise<UsageSummary> 
             count(*) filter (where not success)::int as errors,
             coalesce(sum(input_tokens + output_tokens) filter (where tokens_estimated), 0)::bigint as estimated
      from llm_calls where at >= ${since}`,
-    [days],
+    params,
   );
   const [filed] = await db.query<{ n: number }>(
     `select count(*)::int as n from documents where status = 'filed' and filed_at >= ${since}`,
-    [days],
+    params,
   );
   const byDay = await db.query<{ day: string; calls: number; tokens: number; cost: number }>(
     `select to_char(date_trunc('day', at at time zone 'UTC'), 'YYYY-MM-DD') as day, count(*)::int as calls,
             sum(input_tokens + output_tokens)::bigint as tokens, sum(cost_usd)::float8 as cost
      from llm_calls where at >= ${since} group by 1 order by 1`,
-    [days],
+    params,
   );
   const byModel = await db.query<Record<string, unknown>>(
     `select operation, provider, model, count(*)::int as calls, sum(input_tokens)::bigint as input_tokens,
             sum(output_tokens)::bigint as output_tokens, sum(cost_usd)::float8 as cost, avg(latency_ms)::float8 as latency,
             count(*) filter (where not success)::int as errors
      from llm_calls where at >= ${since} group by 1, 2, 3 order by cost desc, calls desc`,
-    [days],
+    params,
   );
   const bySource = await db.query<{ source: string; calls: number; cost: number }>(
     `select source, count(*)::int as calls, sum(cost_usd)::float8 as cost
      from llm_calls where at >= ${since} group by 1 order by calls desc`,
-    [days],
+    params,
   );
 
   const calls = n(t?.calls);

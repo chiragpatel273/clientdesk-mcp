@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Db } from '../src/db/index.js';
 import { getDocument, ingestDocument } from '../src/domain/documents.js';
 import type { AppServices } from '../src/services.js';
-import { ANA, call, connectAs, demoDbWithDocuments, lastAudit, MAYA, testServices, TOM } from './helpers.js';
+import { ANA, call, connectAs, demoDbWithDocuments, lastAudit, MAYA, testServices, TOM, nb } from './helpers.js';
 
 type Passage = { documentId: string; title: string; clientId: string; page: number | null; link: string };
 
@@ -50,7 +50,8 @@ describe('document tools', () => {
   describe('ingestion', () => {
     it('chunks, embeds and stores every demo document', async () => {
       const [row] = await db.query<{ docs: number; chunks: number; missing: number }>(
-        `select (select count(*)::int from documents) as docs, (select count(*)::int from document_chunks) as chunks,
+        `select (select count(*)::int from documents where firm_id = 'firm_northbridge') as docs,
+                (select count(*)::int from document_chunks where firm_id = 'firm_northbridge') as chunks,
                 (select count(*)::int from document_chunks where embedding is null) as missing`,
       );
       expect(row).toMatchObject({ docs: 13, missing: 0 });
@@ -59,13 +60,13 @@ describe('document tools', () => {
 
     it('returns the existing document when the same file is uploaded twice', async () => {
       const bytes = new TextEncoder().encode('Plain text note\nThis is a test upload with enough text.');
-      const first = await ingestDocument(db, services, {
+      const first = await ingestDocument(nb(db), services, {
         bytes,
         mimeType: 'text/plain',
         filename: 'a.txt',
         uploadedBy: 'st_tom',
       });
-      const second = await ingestDocument(db, services, {
+      const second = await ingestDocument(nb(db), services, {
         bytes,
         mimeType: 'text/plain',
         filename: 'b.txt',
@@ -263,7 +264,7 @@ describe('document tools', () => {
         clientId: 'cl_petrova',
       });
       expect(data.status).toBe('refused');
-      expect((await getDocument(db, 'doc_inbox_blurry_statement'))?.status).toBe('inbox');
+      expect((await getDocument(nb(db), 'doc_inbox_blurry_statement'))?.status).toBe('inbox');
     });
 
     it('refuses to file to a client other than the clear match', async () => {
@@ -292,7 +293,7 @@ describe('document tools', () => {
       expect(data.status).toBe('filed');
       expect(data.document.clientId).toBe('cl_acme');
       expect(data.openItemClosed.id).toBe('oi_004');
-      const doc = await getDocument(db, 'doc_inbox_northwind');
+      const doc = await getDocument(nb(db), 'doc_inbox_northwind');
       expect(doc).toMatchObject({ status: 'filed', clientId: 'cl_acme', taxYear: 2026, docType: 'invoice' });
 
       // Now it's searchable.

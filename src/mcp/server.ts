@@ -12,7 +12,7 @@ import { registerSendToReview } from './tools/send-to-review.js';
 
 export const SERVER_INFO = { name: 'clientdesk', version: '1.0.0' } as const;
 
-const INSTRUCTIONS = `ClientDesk connects you to Northbridge Advisory's client records and documents.
+const INSTRUCTIONS = `ClientDesk connects you to your firm's client records and documents (only your firm's).
 - Only use data returned by these tools; do not invent client facts.
 - When a lookup returns several candidates, ask the user which client they mean.
 - If a tool says the user is not assigned to a client, tell them and suggest asking a partner. Do not try other ways around it.

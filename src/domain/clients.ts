@@ -1,4 +1,4 @@
-import type { Db } from '../db/index.js';
+import { firmOf, type Db } from '../db/index.js';
 
 export interface ClientRef {
   id: string;
@@ -35,50 +35,54 @@ export async function findClients(db: Db, query: string): Promise<ClientRef[]> {
   const q = query.trim();
   if (!q) return [];
   const exact = await db.query<{ id: string; name: string }>(
-    'select id, name from clients where id = $1 or lower(name) = lower($1) order by name',
-    [q],
+    'select id, name from clients where firm_id = $2 and (id = $1 or lower(name) = lower($1)) order by name',
+    [q, firmOf(db)],
   );
   if (exact.length > 0) return exact;
   return db.query<{ id: string; name: string }>(
     `select id, name from clients
-     where lower(name) like '%' || lower($1) || '%'
+     where firm_id = $2 and lower(name) like '%' || lower($1) || '%'
      order by name limit 10`,
-    [q],
+    [q, firmOf(db)],
   );
 }
 
 const TS = (col: string) => `to_char(${col} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')`;
 
 export async function getClientDetail(db: Db, clientId: string): Promise<ClientDetail | null> {
+  const firmId = firmOf(db);
   const [client] = await db.query<{
     id: string;
     name: string;
     entity_type: string;
     fiscal_year_end: string | null;
     status: string;
-  }>('select id, name, entity_type, fiscal_year_end, status from clients where id = $1', [clientId]);
+  }>('select id, name, entity_type, fiscal_year_end, status from clients where id = $1 and firm_id = $2', [
+    clientId,
+    firmId,
+  ]);
   if (!client) return null;
 
   const [staff, contacts, openItems, notes, documents] = await Promise.all([
     db.query<{ name: string; role: string }>(
       `select s.name, s.role from client_assignments a join staff s on s.id = a.staff_id
-       where a.client_id = $1 order by s.role desc, s.name`,
-      [clientId],
+       where a.client_id = $1 and a.firm_id = $2 order by s.role desc, s.name`,
+      [clientId, firmId],
     ),
     db.query<{ name: string; email: string | null; phone: string | null; is_primary: boolean }>(
-      'select name, email, phone, is_primary from contacts where client_id = $1 order by is_primary desc, name',
-      [clientId],
+      'select name, email, phone, is_primary from contacts where client_id = $1 and firm_id = $2 order by is_primary desc, name',
+      [clientId, firmId],
     ),
     db.query<{ id: string; tax_year: number; description: string; status: string; due_date: string | null }>(
       `select id, tax_year, description, status, due_date::text as due_date from open_items
-       where client_id = $1 order by tax_year desc, (status = 'open') desc, due_date nulls last`,
-      [clientId],
+       where client_id = $1 and firm_id = $2 order by tax_year desc, (status = 'open') desc, due_date nulls last`,
+      [clientId, firmId],
     ),
     db.query<{ body: string; author: string | null; created_at: string }>(
       `select n.body, s.name as author, ${TS('n.created_at')} as created_at
        from notes n left join staff s on s.id = n.author_id
-       where n.client_id = $1 order by n.created_at desc limit 5`,
-      [clientId],
+       where n.client_id = $1 and n.firm_id = $2 order by n.created_at desc limit 5`,
+      [clientId, firmId],
     ),
     db.query<{
       id: string;
@@ -89,8 +93,8 @@ export async function getClientDetail(db: Db, clientId: string): Promise<ClientD
       received_at: string;
     }>(
       `select id, title, doc_type, tax_year, status, ${TS('received_at')} as received_at
-       from documents where client_id = $1 order by received_at desc limit 5`,
-      [clientId],
+       from documents where client_id = $1 and firm_id = $2 order by received_at desc limit 5`,
+      [clientId, firmId],
     ),
   ]);
 

@@ -10,6 +10,9 @@ If everything passes, say so in one line.
 
 ## Access and identity
 
+- [ ] Firm data is read and written only through `db.forFirm(actor.firmId)`; queries filter `firm_id = firmOf(db)`;
+      new firm-owned tables have `firm_id`, same-firm foreign keys and the RLS policy.
+- [ ] An id from another firm answers like "not found" (no existence oracle) and is audited as `denied`.
 - [ ] Every tool handler runs inside `runTool()`.
 - [ ] Client data is read only after `canAccessClient` / `partitionByAccess` for **this** actor.
 - [ ] Denied responses contain no client data: names only when the user already typed them, no contacts, notes or documents.

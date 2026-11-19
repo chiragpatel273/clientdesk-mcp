@@ -1,5 +1,5 @@
 import { inferTaxYear } from '../ai/extraction.js';
-import type { Db } from '../db/index.js';
+import { firmOf, type Db } from '../db/index.js';
 import { canAccessClient } from '../domain/access.js';
 import { recordAudit } from '../domain/audit.js';
 import {
@@ -43,7 +43,7 @@ export interface StepResult {
  */
 async function uploader(db: Db, job: Job): Promise<Actor> {
   const actor = await findActorById(db, job.createdBy);
-  if (!actor || actor.role !== 'partner' || actor.readOnly) {
+  if (!actor || actor.firmId !== firmOf(db) || actor.role !== 'partner' || actor.readOnly) {
     throw new PermanentJobError('The uploader is no longer a partner, so the batch stopped.', { denied: true });
   }
   return actor;
