@@ -91,7 +91,7 @@ Build order: 1 → 2 → 3 → 5 → 6 → 4. Every phase must pass `npm run che
 | #   | Phase                    | Goal                                                                 | Gate                                                                                                                       | Status |
 | --- | ------------------------ | -------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- | ------ |
 | 1   | Try the demo             | No login wall: a read-only demo session, enforced on the server      | Fresh browser → "Try the demo" → Overview, Inbox, Review, Audit, Accuracy; every write refused (403) and audited           | Done   |
-| 2   | Search and citation miss | Right page wins; Voyage documented as the production embedder        | Offline citation ≥ 95%, 0 wrong-client filings, no metric worse (or the best honest result, explained)                     | Todo   |
+| 2   | Search and citation miss | Right page wins; Voyage documented as the production embedder        | Offline citation ≥ 95%, 0 wrong-client filings, no metric worse (or the best honest result, explained)                     | Done   |
 | 3   | Batch intake + job queue | Upload many documents; a Postgres job queue processes them           | 10 uploads process in the background with visible progress; a forced failure retries, then dead-letters; worker tests      | Todo   |
 | 5   | Playwright E2E           | The main journeys tested in a real browser, in CI                    | `npx playwright test` passes locally in under ~3 minutes                                                                   | Todo   |
 | 6   | LLM usage and cost       | Every model call recorded (tokens, cost, latency); a Usage page      | An eval run and a batch upload both show on the Usage page; recording tested                                               | Todo   |
@@ -121,6 +121,23 @@ Build order: 1 → 2 → 3 → 5 → 6 → 4. Every phase must pass `npm run che
 - Risks: a public partner-level view shows every audit row, including inputs typed by the owner's own test
   sessions. All data is fictional; the owner should still avoid typing anything real into the live connector.
 
+**Phase 2: Better search and the citation miss.**
+
+- Diagnosis (from `eval/report.md`): q_18 cites page 1 of a two-page statement whose closing balance is on page 2:
+  every word that picks the document (client, bank, account 9950) is on page 1, and the exact-identifier list
+  rewards it twice. q_27 has two right answers: Hana Kim has a 1098 and a 1099-DIV from Summit Savings Bank for
+  2025, and the paraphrased question doesn't name the form (a dataset bug; the uniqueness check used the form type).
+- Fixes, all general: (1) passage context repeats key identifiers and names the extracted fields a passage holds by
+  description; (2) within a document, the page is chosen by question words its passages don't all share; (3)
+  query-term coverage as a fourth RRF list. Dataset: paraphrases name the invoice number / kind of amount.
+- Anti-overfitting: a 72-question robustness set (both variants for every searchable document) in every report.
+- Schema: migration `004_passage_version.sql`; start-up rebuilds passages from an older format or another embedder,
+  so the deploy and a later switch to Voyage need no manual step (`npm run reindex` exists for by hand).
+- Offline runs write `eval/baseline.*` (CI artifact); model runs keep `eval/report.*`, so the published Groq report
+  is never overwritten by the free run. The dashboard's Accuracy page switches between them.
+- Risks: start-up reindexing blocks start for large databases (13 documents here: instant; Phase 3's job queue is
+  the place to move it); the Groq numbers stay pre-v2 until the owner reruns it.
+
 ### Decisions made on the owner's behalf
 
 (Each with its reason. Newest last.)
@@ -138,6 +155,14 @@ Build order: 1 → 2 → 3 → 5 → 6 → 4. Every phase must pass `npm run che
    them at once even though the cookie is still validly signed.
 5. **The demo rate limit is in memory** (5 a minute, 30 an hour per IP). Render's free plan runs one instance;
    with several instances each would count separately, which only loosens the limit. Redis would be the next step.
+6. **Corrected three ambiguous eval questions** rather than leaving them: a question with two right answers
+   measures nothing. Reported as a dataset fix, separately from the system changes, with the old ranking's score on
+   the corrected set (93.3%) so the system gain isn't inflated.
+7. **Did not replay the Groq run.** Its extractions could be reconstructed from the report, but the honest update
+   is a real rerun (free tier), listed for the owner. The README labels the Groq column "before v2 search".
+8. **Offline eval output moved to `eval/baseline.*`**, so the spec'd `npm run eval -- --extractor=rules --check`
+   no longer overwrites the published model report.
+9. **Startup reindexing instead of a manual step**: the owner can't reach Neon's port 5432 from their network.
 
 ### Blocked / needs owner
 

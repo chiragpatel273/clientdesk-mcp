@@ -108,8 +108,8 @@ export async function searchDocuments(
   add(keyword, 'keyword');
   add(exact, 'keyword', 2);
 
-  const top = [...fused.entries()].sort((a, b) => b[1].score - a[1].score).slice(0, options.limit);
-  if (top.length === 0) return [];
+  const ranked = [...fused.entries()].sort((a, b) => b[1].score - a[1].score);
+  if (ranked.length === 0) return [];
 
   const details = await db.query<{
     id: string;
@@ -125,14 +125,35 @@ export async function searchDocuments(
     `select ch.id, ch.document_id, d.title, d.client_id, c.name as client_name, d.tax_year, d.doc_type, ch.page, ch.content
      from document_chunks ch join documents d on d.id = ch.document_id join clients c on c.id = d.client_id
      where ch.id = any($1::text[])`,
-    [top.map(([id]) => id)],
+    [ranked.map(([id]) => id)],
   );
   const byId = new Map(details.map((d) => [d.id, d]));
-  return top.flatMap(([id, { score, matchedBy }]) => {
+
+  // Fourth list: the candidates ranked by how many of the question's words they contain. Vectors and full-text
+  // each reward a strong match on some words; this rewards matching all of them (the payer AND the form AND the
+  // recipient), which is what separates near-identical forms from different issuers.
+  const words = [...new Set(tokenize(query))];
+  if (words.length > 1) {
+    const coverage = ranked
+      .map(([id], order) => {
+        const tokens = new Set(tokenize(byId.get(id)?.content ?? ''));
+        return { id, order, covered: words.filter((w) => tokens.has(w)).length };
+      })
+      .sort((a, b) => b.covered - a.covered || a.order - b.order);
+    add(coverage, 'keyword');
+  }
+  const reranked = [...fused.entries()].sort((a, b) => b[1].score - a[1].score);
+
+  const candidates = reranked.flatMap(([id, { score, matchedBy }]) => {
     const d = byId.get(id);
-    if (!d) return [];
-    return [
-      {
+    return d ? [{ id, documentId: d.document_id, content: d.content, score, matchedBy }] : [];
+  });
+
+  return rerankPages(query, candidates)
+    .slice(0, options.limit)
+    .map(({ id, score, matchedBy }) => {
+      const d = byId.get(id)!;
+      return {
         chunkId: d.id,
         documentId: d.document_id,
         title: d.title,
@@ -144,7 +165,44 @@ export async function searchDocuments(
         content: d.content,
         score: Number(score.toFixed(5)),
         matchedBy: [...matchedBy],
-      },
-    ];
-  });
+      };
+    });
+}
+
+interface Ranked {
+  id: string;
+  documentId: string;
+  content: string;
+  score: number;
+}
+
+/**
+ * Picks the right page within each document. Fusion decides which documents rank where; but the words that pick a
+ * document (client, bank, account number) are printed, or carried in the context line, on every one of its pages,
+ * so they can't say which page holds the answer. Within one document, the passages are re-ordered by how many
+ * question words they hold that the document's other retrieved passages don't all share ("left at the end of the
+ * period" finds the page with the closing balance). Documents keep their positions, so hit rate can't change; only
+ * which of a document's passages is cited first.
+ */
+export function rerankPages<T extends Ranked>(query: string, ranked: T[]): T[] {
+  const words = new Set(tokenize(query));
+  const groups = new Map<string, number[]>();
+  ranked.forEach((r, i) => groups.set(r.documentId, [...(groups.get(r.documentId) ?? []), i]));
+
+  const out = [...ranked];
+  for (const positions of groups.values()) {
+    if (positions.length < 2) continue;
+    const tokens = positions.map((i) => new Set(tokenize(ranked[i]!.content)));
+    const shared = new Set([...words].filter((w) => tokens.every((t) => t.has(w))));
+    const distinctive = tokens.map((t) => [...words].filter((w) => !shared.has(w) && t.has(w)).length);
+    const order = positions
+      .map((i, k) => ({ i, k }))
+      .sort((a, b) => distinctive[b.k]! - distinctive[a.k]! || a.i - b.i)
+      .map((x) => x.i);
+    // Each slot keeps its fused score, so the list stays sorted; the passage in it may change.
+    positions.forEach((slot, n) => {
+      out[slot] = { ...ranked[order[n]!]!, score: ranked[slot]!.score };
+    });
+  }
+  return out;
 }

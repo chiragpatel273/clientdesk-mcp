@@ -292,13 +292,19 @@ export function createApiRouter(deps: Deps): Router {
     return sendDocumentFile(res, services, doc);
   });
 
-  router.get('/accuracy', async (_req, res) => {
-    try {
-      const report = await readFile(join(deps.projectRoot, 'eval', 'report.json'), 'utf8');
-      res.type('application/json').send(report);
-    } catch {
-      error(res, 404, 'No accuracy report yet');
+  // `report`: the latest model run (Claude or Groq), published. `baseline`: the offline rules run CI makes on every
+  // push. Without a model run, `report` falls back to the baseline.
+  router.get('/accuracy', async (req, res) => {
+    const files = req.query.run === 'baseline' ? ['baseline'] : ['report', 'baseline'];
+    for (const file of files) {
+      try {
+        const report = await readFile(join(deps.projectRoot, 'eval', `${file}.json`), 'utf8');
+        return res.type('application/json').send(report);
+      } catch {
+        // Try the next one.
+      }
     }
+    return error(res, 404, 'No accuracy report yet');
   });
 
   router.use((_req: Request, res: Response) => error(res, 404, 'Not found'));

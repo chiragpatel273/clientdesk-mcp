@@ -1,12 +1,14 @@
 /**
- * `npm run eval`: measures extraction, client matching and search against the labelled set in eval/dataset.ts
- * and writes eval/report.json (read by the dashboard) and eval/report.md.
+ * `npm run eval`: measures extraction, client matching and search against the labelled set in eval/dataset.ts.
+ * A model run (Claude, Groq) writes eval/report.json + .md: the published report the dashboard shows first. The
+ * offline rules run (CI, every push) writes eval/baseline.json + .md, so it never overwrites a model run.
  *
  *   npm run eval                     # extractor from config: Claude if ANTHROPIC_API_KEY is set, else rules
  *   npm run eval -- --extractor=rules
  *   npm run eval -- --extractor=claude
  *   npm run eval -- --extractor=groq
  *   npm run eval -- --check          # exit 1 if any document was filed to the wrong client (CI)
+ *   npm run eval -- --out=eval/x     # write eval/x.json and eval/x.md instead
  */
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -25,7 +27,7 @@ import { describeDocument, ingestDocument } from '../src/domain/documents.js';
 import { matchClients } from '../src/domain/matching.js';
 import { searchDocuments } from '../src/domain/search.js';
 import { memoryFileStore } from '../src/storage/files.js';
-import { DOCUMENTS, QUESTIONS, type EvalDocument } from '../eval/dataset.js';
+import { DOCUMENTS, eligible, QUESTIONS, questionFor, type EvalDocument } from '../eval/dataset.js';
 
 const args = new Map(
   process.argv.slice(2).map((a) => {
@@ -151,6 +153,8 @@ for (const doc of DOCUMENTS) {
       filename: `${doc.id}.pdf`,
       // As file_document would: a title from this run's extraction, falling back to a neutral one.
       title: describeDocument(cases.find((c) => c.doc.id === doc.id)!.extraction) ?? `Document ${doc.id}`,
+      // As a filed document carries it: the passages' context lines use it.
+      extraction: cases.find((c) => c.doc.id === doc.id)!.extraction,
       uploadedBy: null,
       filed: { clientId: doc.clientId, taxYear: doc.taxYear, docType: doc.docType, staffId: null },
     },
@@ -168,6 +172,24 @@ for (const q of QUESTIONS) {
     citedCorrectly: top?.documentId === q.documentId && top.page === q.page,
     top: top ? `${top.documentId} p.${top.page}` : 'none',
   });
+}
+
+// Robustness check, not a target: both question variants (plain and paraphrased) for every searchable document, so
+// a ranking change that only helps the 30 asked questions shows up here.
+const wide = [];
+for (const doc of eligible) {
+  for (const paraphrased of [false, true]) {
+    const q = questionFor(doc, paraphrased);
+    const passages = await searchDocuments(db, embedder, q.question, { allowedClientIds: 'all', limit: 5 });
+    const top = passages[0];
+    wide.push({
+      id: `${doc.id}${paraphrased ? ' (paraphrased)' : ''}`,
+      hit: passages.some((p) => p.documentId === q.documentId),
+      citedCorrectly: top?.documentId === q.documentId && top.page === q.page,
+      expected: `${q.documentId} p.${q.page}`,
+      top: top ? `${top.documentId} p.${top.page}` : 'none',
+    });
+  }
 }
 await db.close();
 
@@ -255,6 +277,12 @@ const report = {
     citedCorrectly: s.citedCorrectly,
     top: s.top,
   })),
+  robustness: {
+    questions: wide.length,
+    hitRate: ratio(wide.filter((w) => w.hit).length, wide.length),
+    citationAccuracy: ratio(wide.filter((w) => w.citedCorrectly).length, wide.length),
+    misses: wide.filter((w) => !w.citedCorrectly).map((w) => `${w.id}: expected ${w.expected}, top result ${w.top}`),
+  },
   changes,
 };
 
@@ -271,7 +299,7 @@ const md = [
     `filing threshold ${config.filing.threshold}, margin ${config.filing.margin}`,
   '',
   `${DOCUMENTS.length} labelled documents (15 per type) and ${QUESTIONS.length} questions with known source pages. ` +
-    'All data is synthetic. Regenerate with `npm run eval`.',
+    `All data is synthetic. Regenerate with \`npm run eval${remote ? ` -- --extractor=${extractorName}` : ' -- --extractor=rules'}\`.`,
   '',
   '| Metric | Result | Target | |',
   '| --- | --- | --- | --- |',
@@ -309,6 +337,14 @@ const md = [
         )
     : ['None.']),
   '',
+  '## Robustness check (not a target)',
+  '',
+  `Both question variants for every searchable document: ${report.robustness.questions} questions, ` +
+    `hit rate ${pct(report.robustness.hitRate)}, citation accuracy ${pct(report.robustness.citationAccuracy)}. ` +
+    'A ranking change that only helped the 30 asked questions would show up here.',
+  '',
+  ...(report.robustness.misses.length ? report.robustness.misses.map((m) => `- ${m}`) : ['- No misses.']),
+  '',
   '## What was changed to improve these numbers',
   '',
   ...(changes.length ? changes.map((c) => `- ${c}`) : ['- Nothing yet.']),
@@ -329,10 +365,11 @@ const md = [
   '',
 ].join('\n');
 
-await writeFile(join(root, 'eval', 'report.json'), `${JSON.stringify(report, null, 2)}\n`);
-await writeFile(join(root, 'eval', 'report.md'), md);
+const out = args.get('out') ?? (remote ? 'eval/report' : 'eval/baseline');
+await writeFile(join(root, `${out}.json`), `${JSON.stringify(report, null, 2)}\n`);
+await writeFile(join(root, `${out}.md`), md);
 console.log(md.split('\n## By document type')[0]);
-console.log('\nWrote eval/report.md and eval/report.json');
+console.log(`\nWrote ${out}.md and ${out}.json`);
 
 if (args.has('check') && wrongClient > 0) {
   console.error(`FAIL: ${wrongClient} document(s) would be filed to the wrong client.`);

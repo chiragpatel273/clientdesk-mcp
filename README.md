@@ -47,29 +47,36 @@ Claude asks before running them.
 
 ## Accuracy
 
-The latest report is [`eval/report.md`](eval/report.md) (also on the dashboard's Accuracy page): extraction by
-**Groq `openai/gpt-oss-20b`, escalating to `openai/gpt-oss-120b`** when the document type or a required field is below 0.8 confidence,
-search with **`local-hash-v1`** embeddings, on 60 labelled documents and 30 questions with a known source page.
+Two reports, both on the dashboard's Accuracy page: [`eval/report.md`](eval/report.md), the latest model run (extraction by
+**Groq `openai/gpt-oss-20b`, escalating to `openai/gpt-oss-120b`** below 0.8 confidence), and
+[`eval/baseline.md`](eval/baseline.md), the free offline run (regex extractor) that CI repeats on every push. Both use
+**`local-hash-v1`** embeddings, on 60 labelled documents and 30 questions with a known source page.
 
-| Metric                  | Latest report (Groq gpt-oss) | Offline rules baseline | Target |
-| ----------------------- | ---------------------------- | ---------------------- | ------ |
-| Field accuracy          | **98.1%**                    | 84.0%                  | ≥ 95%  |
-| Wrong-client filings    | **0**                        | 0                      | 0      |
-| Review-queue rate       | **10.0%**                    | 25.0%                  | ≤ 10%  |
-| Search hit rate (top 5) | **100%**                     | 100%                   | ≥ 90%  |
-| Citation accuracy       | **93.3%: misses the target** | 96.7%                  | ≥ 95%  |
+| Metric                  | Groq gpt-oss (2026-11-09, before v2 search) | Offline baseline (v2) | Target |
+| ----------------------- | ------------------------------------------- | --------------------- | ------ |
+| Field accuracy          | **98.1%**                                   | 84.0%                 | ≥ 95%  |
+| Wrong-client filings    | **0**                                       | 0                     | 0      |
+| Review-queue rate       | **10.0%**                                   | 25.0%                 | ≤ 10%  |
+| Search hit rate (top 5) | **100%**                                    | 100%                  | ≥ 90%  |
+| Citation accuracy       | **93.3%: missed the target**                | **100%**              | ≥ 95%  |
 
-Four of five targets are met. Citation accuracy misses: in 2 of 30 questions the top passage is from the right
-document but the wrong page, or from a similar form. Every remaining extraction error went to the review queue,
-none to the wrong client. The offline rules baseline is free and deterministic; CI runs it on every push and fails
-the build on any wrong-client filing.
+**v2 fixed the citation miss** and measured it offline. The two misses were a closing balance on page 2 ranked below
+page 1 of the same statement, and a question with two right answers (one bank sent the same person two forms that
+year; the question set is now corrected). Three general ranking changes: passages repeat their document's key
+identifiers and name the fields they hold; within a document the page is chosen by the question words its pages
+don't share; and query-term coverage is a fourth ranked list in the fusion. Offline citation accuracy went from
+93.3% to 100% on the corrected questions, with no question worse. A **robustness set** (both phrasings for every
+searchable document, 72 questions, in every report) went from 93.1% to 98.6%, so the gain isn't tuned to the 30
+asked questions; its one miss is published. The Groq column predates these changes: rerun it to update
+(`npm run eval -- --extractor=groq`, free tier). Every extraction error went to the review queue, never to the
+wrong client, and CI fails the build on any wrong-client filing.
 
 **Supported but not measured yet:** the Claude extractor (Haiku 5.5, escalating to Opus 5.5; it can also read
-image-only scans) and Voyage embeddings. `local-hash-v1` is a keyword-style embedder (hashed word and word-pair features, no model)
-chosen to keep the demo free to run; Voyage (`voyage-3.5`) is the drop-in for real semantic search: set
-`VOYAGE_API_KEY` and reseed. Measure either with `npm run eval -- --extractor=groq`, `npm run eval:claude` (about
-$0.10–0.30 a run) or plain `npm run eval` with the keys set. The report lists every case, every miss and what was
-changed.
+image-only scans) and **Voyage embeddings (`voyage-3.5`), the production option**. `local-hash-v1` is a
+keyword-style embedder (hashed word and word-pair features, no model) chosen to keep the demo free to run; it can't
+tell that "pay for the work" means "fee" (the robustness set's one miss). Set `VOYAGE_API_KEY` and restart: start-up
+rebuilds every passage with Voyage (`npm run reindex` does it by hand). Measure with `npm run eval:claude` (about
+$0.10–0.30 a run) or `npm run eval` with the keys set. The report lists every case, every miss and what was changed.
 
 ## Run it locally
 
@@ -82,7 +89,7 @@ cp .env.example .env
 npm run dashboard:build
 npm run dev          # MCP at http://localhost:3000/mcp, dashboard at http://localhost:3000/dashboard/
 npm run check        # typecheck + lint + tests
-npm run eval         # accuracy report → eval/report.md, eval/report.json
+npm run eval -- --extractor=rules   # offline accuracy report → eval/baseline.md (model runs → eval/report.md)
 ```
 
 Add `GROQ_API_KEY` (free tier; the extractor the live demo uses) or `ANTHROPIC_API_KEY` (Claude), and

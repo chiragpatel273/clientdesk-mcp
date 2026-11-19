@@ -45,19 +45,30 @@ sensitive fields masked, outcome and duration.
 60 labelled synthetic documents (15 per type) with hard cases: prose layouts, simulated scans, look-alike clients,
 missing fields, prior-year and multi-page documents, a non-client. Plus 30 questions with a known source page.
 
-| Metric                  | Offline baseline (regex) | Groq (gpt-oss) | Target |
-| ----------------------- | ------------------------ | -------------- | ------ |
-| Field accuracy          | 84.0%                    | **98.1%**      | ≥ 95%  |
-| Wrong-client filings    | 0                        | **0**          | 0      |
-| Review-queue rate       | 25.0%                    | **10.0%**      | ≤ 10%  |
-| Search hit rate (top 5) | 100%                     | **100%**       | ≥ 90%  |
-| Citation accuracy       | 96.7%                    | 93.3% (miss)   | ≥ 95%  |
+| Metric                  | Offline baseline (regex, v2) | Groq (gpt-oss, before v2 search) | Target |
+| ----------------------- | ---------------------------- | -------------------------------- | ------ |
+| Field accuracy          | 84.0%                        | **98.1%**                        | ≥ 95%  |
+| Wrong-client filings    | 0                            | **0**                            | 0      |
+| Review-queue rate       | 25.0%                        | **10.0%**                        | ≤ 10%  |
+| Search hit rate (top 5) | 100%                         | **100%**                         | ≥ 90%  |
+| Citation accuracy       | **100%**                     | 93.3% (missed)                   | ≥ 95%  |
 
-Four of five targets met, and the miss is published: 2 of 30 questions cite the right document but the wrong page
-or a similar form first. Search uses `local-hash-v1` embeddings in both columns: a keyword-style embedder chosen to
-keep the demo free to run. Voyage embeddings and the Claude extractor are supported but not measured yet.
+The Groq run missed citation accuracy: 2 of 30 questions cited the wrong page or a similar form first. v2 fixed it
+with three general ranking changes (below) and measured the fix offline: 93.3% to 100% on the corrected question
+set, and 93.1% to 98.6% on a 72-question robustness set that guards against tuning to the asked questions. The Groq
+column predates v2 and needs a rerun. Search uses `local-hash-v1` embeddings in both columns: a keyword-style
+embedder chosen to keep the demo free to run. Voyage embeddings (the production option) and the Claude extractor are
+supported but not measured yet.
 
 What changed along the way (from the report):
+
+- v2: one of the two citation misses was a question with two right answers (one bank sent the same person two forms
+  that year); the question set was corrected and the fix reported as a dataset fix. The other was a closing balance
+  on page 2 ranked below page 1, because the words that pick the document (client, bank, account) are on page 1.
+  Passages now repeat their document's identifiers and name the fields they hold ("balance at the end of the
+  period"), the page within a document is chosen by the words its pages don't share, and query-term coverage is a
+  fourth ranked list. An ablation of each change is in the report; one robustness question got worse (a near-tie
+  that needs semantic embeddings) and is published.
 
 - A first run showed citation accuracy at 56.7%. Adding a context line to every passage, descriptive titles for
   filed documents and an exact-identifier signal, together with fixing two labelling mistakes in the question set,

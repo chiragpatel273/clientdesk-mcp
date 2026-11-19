@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { toVectorLiteral, type Embedder } from '../ai/embeddings.js';
-import { fieldValue, type DocType, type Extraction } from '../ai/extraction.js';
+import { FIELDS, fieldValue, normalizeAmount, normalizeDate, type DocType, type Extraction } from '../ai/extraction.js';
 import type { Db } from '../db/index.js';
 import { extractText } from '../documents/text.js';
 import type { AppServices } from '../services.js';
@@ -134,6 +134,8 @@ export interface IngestInput {
   filed?: { clientId: string; taxYear: number | null; docType: DocType | 'other'; staffId: string | null };
   id?: string;
   receivedAt?: string;
+  /** An extraction already made for these bytes (the eval, re-ingests): stored, and used for the passage context. */
+  extraction?: Extraction;
 }
 
 function titleFromFilename(filename: string | null): string {
@@ -172,9 +174,11 @@ export async function ingestDocument(
 
   await db.query(
     `insert into documents (id, client_id, tax_year, doc_type, title, status, storage_key, page_count, received_at,
-                            filed_at, filed_by, source_filename, mime_type, content_sha256, uploaded_by, text_layer, page_text)
+                            filed_at, filed_by, source_filename, mime_type, content_sha256, uploaded_by, text_layer, page_text,
+                            extraction, extracted_at)
      values ($1, $2, $3, $4, $5, $6, $7, $8, coalesce($9::timestamptz, now()),
-             case when $6 = 'filed' then coalesce($9::timestamptz, now()) end, $10, $11, $12, $13, $14, $15, $16::jsonb)`,
+             case when $6 = 'filed' then coalesce($9::timestamptz, now()) end, $10, $11, $12, $13, $14, $15, $16::jsonb,
+             $17::jsonb, case when $17::jsonb is not null then now() end)`,
     [
       id,
       input.filed?.clientId ?? null,
@@ -192,33 +196,140 @@ export async function ingestDocument(
       input.uploadedBy,
       textLayer,
       JSON.stringify(pages),
+      input.extraction ? JSON.stringify(input.extraction) : null,
     ],
   );
   await reindexDocument(db, services.embedder, id);
   return { id, duplicate: false };
 }
 
+/** Bump when `passageContext` changes: start-up then rebuilds older passages (`reindexStale`). */
+export const PASSAGE_VERSION = 2;
+
+/** Identifiers that say which document a passage belongs to, repeated on every page (continuation pages lack them). */
+const KEY_FIELDS: Record<DocType, { name: string; label: string }[]> = {
+  invoice: [{ name: 'invoice_number', label: 'invoice' }],
+  bank_statement: [{ name: 'account_last4', label: 'account ****' }],
+  engagement_letter: [{ name: 'tax_year', label: 'tax year' }],
+  tax_form: [
+    { name: 'form_type', label: 'Form' },
+    { name: 'tax_year', label: 'tax year' },
+  ],
+};
+
+const AMOUNTS = /\(?-?\$?\s?\d[\d,]*\.\d{2}\)?/g;
+const DATES =
+  /\b(\d{4}-\d{1,2}-\d{1,2}|\d{1,2}\/\d{1,2}\/\d{4}|\d{1,2} [A-Za-z]{3,9},? \d{4}|[A-Za-z]{3,9} \d{1,2},? \d{4})\b/g;
+
+/** Does this passage print the extracted value? Compared after the same normalisation the extractors use. */
+function passageHasValue(kind: string, value: string, text: string): boolean {
+  switch (kind) {
+    case 'amount':
+      return [...text.matchAll(AMOUNTS)].some((m) => normalizeAmount(m[0]) === value);
+    case 'date':
+      return [...text.matchAll(DATES)].some((m) => normalizeDate(m[0]) === value);
+    case 'last4':
+      return text.replace(/[^\d*]/g, ' ').includes(value);
+    default:
+      return text.toLowerCase().includes(value.toLowerCase());
+  }
+}
+
+/** A field description without its examples: "Form name, e.g. 1099-INT, W-2" would put every form's number on every page. */
+function plainDescription(description: string): string {
+  return description
+    .replace(/\s*\([^)]*\)/g, '')
+    .replace(/,?\s*e\.g\..*$/i, '')
+    .trim()
+    .toLowerCase();
+}
+
 /**
- * (Re)builds a document's search passages. Each passage starts with a context line (title, client, page), so a
- * page that only holds "Total due: $4,768.20" still says which invoice and client it belongs to.
- * Called on ingest and again after filing, when the title and client become known.
+ * The context line(s) a passage starts with, so it can be found and cited on its own:
+ * - document: title, client, document type and its key identifiers (account ending 9950), on every page;
+ * - page: which extracted fields this passage holds, by their plain-English description ("balance at the end of
+ *   the period" for the closing balance), so a question in other words still lands on the page with the answer.
+ * Without an extraction (seeded or not yet extracted) only the document line is written.
+ */
+export function passageContext(doc: DocumentRecord, text: string, page: number): string {
+  const extraction = doc.extraction && doc.extraction.docType !== 'other' ? doc.extraction : null;
+  const parts = [doc.title, doc.clientName ?? 'unfiled'];
+  if (extraction) {
+    const type = extraction.docType as DocType;
+    parts.push(type.replace('_', ' '));
+    for (const key of KEY_FIELDS[type]) {
+      const value = fieldValue(extraction, key.name);
+      if (value && !doc.title.includes(value))
+        parts.push(key.label.endsWith('*') ? `${key.label}${value}` : `${key.label} ${value}`);
+    }
+  }
+  parts.push(`page ${page}`);
+  const lines = [parts.join(' | ')];
+  if (extraction) {
+    const held = FIELDS[extraction.docType as DocType].filter((def) => {
+      const value = fieldValue(extraction, def.name);
+      return value !== null && passageHasValue(def.kind, value, text);
+    });
+    if (held.length) {
+      // Descriptions, not field names: "period end" would tie a statement's first page (which prints the period) with
+      // the page holding the balance "at the end of the period".
+      lines.push(`On this page: ${held.map((d) => plainDescription(d.description)).join('; ')}`);
+    }
+  }
+  return lines.join('\n');
+}
+
+/**
+ * (Re)builds a document's search passages. Each passage starts with its context (see `passageContext`), so a page
+ * that only holds "Closing balance: $90,677.03" still says which statement, client and account it belongs to, and
+ * that it holds the closing balance.
+ * Called on ingest and again after filing, when the title, client and extraction become known.
  */
 export async function reindexDocument(db: Db, embedder: Embedder, id: string): Promise<void> {
   const doc = await getDocument(db, id);
   if (!doc) return;
   const chunks = chunkPages(doc.pages).map((c) => ({
     ...c,
-    content: `${doc.title} | ${doc.clientName ?? 'unfiled'} | page ${c.page}\n${c.content}`,
+    content: `${passageContext(doc, c.content, c.page)}\n${c.content}`,
   }));
-  const vectors = chunks.length ? await embedder.embed(chunks.map((c) => c.content), 'document') : [];
+  const vectors = chunks.length
+    ? await embedder.embed(
+        chunks.map((c) => c.content),
+        'document',
+      )
+    : [];
   await db.query('delete from document_chunks where document_id = $1', [id]);
   for (const [i, chunk] of chunks.entries()) {
     await db.query(
-      `insert into document_chunks (id, document_id, page, chunk_index, content, embedding, embedding_model)
-       values ($1, $2, $3, $4, $5, $6::vector, $7)`,
-      [`${id}_c${i}`, id, chunk.page, i, chunk.content, toVectorLiteral(vectors[i]!), embedder.model],
+      `insert into document_chunks (id, document_id, page, chunk_index, content, embedding, embedding_model, passage_version)
+       values ($1, $2, $3, $4, $5, $6::vector, $7, $8)`,
+      [`${id}_c${i}`, id, chunk.page, i, chunk.content, toVectorLiteral(vectors[i]!), embedder.model, PASSAGE_VERSION],
     );
   }
+}
+
+/**
+ * Rebuilds the passages of every document that has any built by another embedder (local → Voyage) or in an older
+ * format. Runs on start-up, so a deploy that changes either needs no manual step. `all` rebuilds every document.
+ */
+export async function reindexStale(
+  db: Db,
+  embedder: Embedder,
+  options: { all?: boolean; log?: (msg: string) => void } = {},
+): Promise<number> {
+  const rows = await db.query<{ id: string }>(
+    `select d.id from documents d
+     where $1::boolean
+        or exists (select 1 from document_chunks ch
+                   where ch.document_id = d.id and (ch.embedding_model is distinct from $2 or ch.passage_version < $3))
+     order by d.received_at, d.id`,
+    [options.all ?? false, embedder.model, PASSAGE_VERSION],
+  );
+  for (const [i, row] of rows.entries()) {
+    await reindexDocument(db, embedder, row.id);
+    if ((i + 1) % 25 === 0) options.log?.(`Reindexed ${i + 1} of ${rows.length} documents...`);
+  }
+  return rows.length;
 }
 
 /** A descriptive title from the extracted fields, e.g. "Invoice INV-20931 from Northwind Office Supplies". */
@@ -248,7 +359,12 @@ export function hasFilenameTitle(doc: DocumentRecord): boolean {
 }
 
 /** After filing: give a file-name-titled document a descriptive title, then rebuild its passages. */
-export async function retitleAndReindex(db: Db, embedder: Embedder, id: string, extraction: Extraction | null): Promise<void> {
+export async function retitleAndReindex(
+  db: Db,
+  embedder: Embedder,
+  id: string,
+  extraction: Extraction | null,
+): Promise<void> {
   const doc = await getDocument(db, id);
   if (!doc) return;
   const title = extraction ? describeDocument(extraction) : null;

@@ -39,7 +39,7 @@ services:
       - key: GROQ_API_KEY
         sync: false # free extractor (console.groq.com); used when ANTHROPIC_API_KEY is blank
       - key: VOYAGE_API_KEY
-        sync: false # optional; blank uses the built-in local embeddings
+        sync: false # production embeddings (voyage-3.5); blank uses the free local-hash-v1. Start-up re-embeds on change
       - key: STORAGE
         value: s3
       - key: S3_BUCKET

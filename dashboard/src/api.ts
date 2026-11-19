@@ -131,6 +131,16 @@ export interface AccuracyCase {
   fieldErrors: string[];
 }
 
+/** `report`: the latest model run. `baseline`: the offline rules run from CI. */
+export type AccuracyRun = 'report' | 'baseline';
+
+export interface AccuracyRobustness {
+  questions: number;
+  hitRate: number;
+  citationAccuracy: number;
+  misses: string[];
+}
+
 export interface AccuracyReport {
   generatedAt: string;
   extractor: string;
@@ -140,6 +150,8 @@ export interface AccuracyReport {
   byDocType: AccuracyByDocType[];
   cases: AccuracyCase[];
   changes: string[];
+  /** Reports from v2 on: both question variants for every searchable document. */
+  robustness?: AccuracyRobustness;
 }
 
 /** An HTTP error from the API, carrying the server's `{ error }` message when there is one. */
@@ -286,7 +298,8 @@ export const api = {
       body: file,
       headers: { 'content-type': contentType, 'x-filename': headerSafeFilename(file.name) },
     }),
-  accuracy: () => request<AccuracyReport>('GET', '/api/accuracy'),
+  accuracy: (run: AccuracyRun = 'report') =>
+    request<AccuracyReport>('GET', `/api/accuracy${run === 'baseline' ? '?run=baseline' : ''}`),
   logout: () => request<unknown>('POST', '/auth/logout'),
   authOptions: () => request<AuthOptions>('GET', '/auth/options'),
   startDemo: () => request<{ ok: true }>('POST', '/auth/demo'),

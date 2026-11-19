@@ -2,6 +2,7 @@ import type { Config } from './config.js';
 import { createDb, type Db } from './db/index.js';
 import { migrate } from './db/migrate.js';
 import { DEMO_DOCUMENTS, seedDemoDocuments } from './demo/documents.js';
+import { reindexStale } from './domain/documents.js';
 import { ensureDemoVisitor, isSeeded, seedDemoFirm } from './demo/seed.js';
 import type { AppServices } from './services.js';
 
@@ -15,6 +16,8 @@ export async function openDatabase(
   const ran = await migrate(db);
   if (ran.length) log(`Applied migrations: ${ran.join(', ')}`);
   if (config.seedDemo) await seedDemo(db, log, services);
+  const reindexed = await reindexStale(db, services.embedder, { log });
+  if (reindexed) log(`Rebuilt search passages for ${reindexed} documents (embeddings: ${services.embedder.model}).`);
   return db;
 }
 
