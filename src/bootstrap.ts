@@ -2,7 +2,7 @@ import type { Config } from './config.js';
 import { createDb, type Db } from './db/index.js';
 import { migrate } from './db/migrate.js';
 import { DEMO_DOCUMENTS, seedDemoDocuments } from './demo/documents.js';
-import { isSeeded, seedDemoFirm } from './demo/seed.js';
+import { ensureDemoVisitor, isSeeded, seedDemoFirm } from './demo/seed.js';
 import type { AppServices } from './services.js';
 
 /** Opens the database, applies migrations and (optionally) loads the demo firm and its documents. */
@@ -31,6 +31,8 @@ export async function seedDemo(
   if (!(await isSeeded(db))) {
     await seedDemoFirm(db);
     log('Seeded the Northbridge Advisory demo firm.');
+  } else if (await ensureDemoVisitor(db)) {
+    log('Added the read-only demo visitor.');
   }
   const ids = DEMO_DOCUMENTS.map((d) => d.id);
   const [row] = await db.query<{ n: number }>('select count(*)::int as n from documents where id = any($1)', [ids]);

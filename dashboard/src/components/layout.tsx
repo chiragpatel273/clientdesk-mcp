@@ -20,6 +20,7 @@ import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { Select } from './ui/select';
 import { Tooltip } from './ui/tooltip';
+import { DemoBanner, DemoVisitor, useAuthOptions, useStartDemo } from './demo';
 
 export function RoleBadge({ role }: { role: Role }) {
   return (
@@ -55,9 +56,13 @@ export function ThemeToggle() {
   );
 }
 
+const DEMO_OPTION = '__demo__';
+
 function DevUserSwitcher() {
   const { me, switchUser } = useSession();
   const staff = useQuery({ queryKey: ['staff'], queryFn: api.staff, staleTime: Infinity, retry: false });
+  const options = useAuthOptions();
+  const startDemo = useStartDemo();
   const list = staff.data?.staff ?? [{ email: me.email, name: me.name, role: me.role }];
 
   return (
@@ -74,14 +79,15 @@ function DevUserSwitcher() {
         id="dev-user"
         className="w-40 sm:w-56"
         value={me.email}
-        onChange={(e) => switchUser(e.target.value)}
-        disabled={staff.isPending}
+        onChange={(e) => (e.target.value === DEMO_OPTION ? startDemo.mutate() : switchUser(e.target.value))}
+        disabled={staff.isPending || startDemo.isPending}
       >
         {list.map((s) => (
           <option key={s.email} value={s.email}>
             {s.name} · {s.role === 'partner' ? 'Partner' : 'Assistant'}
           </option>
         ))}
+        {options.data?.demoLogin && <option value={DEMO_OPTION}>Try the demo (read-only)</option>}
       </Select>
     </div>
   );
@@ -128,6 +134,7 @@ export function Layout() {
 
   return (
     <div className="min-h-dvh">
+      {me.readOnly && <DemoBanner />}
       <header className="sticky top-0 z-40 border-b bg-background/85 backdrop-blur supports-[backdrop-filter]:bg-background/70">
         <div className="mx-auto flex h-14 max-w-7xl items-center justify-between gap-3 px-4 sm:px-6">
           <div className="flex min-w-0 items-center gap-2">
@@ -139,7 +146,7 @@ export function Layout() {
             <span className="hidden truncate text-sm text-muted-foreground sm:inline">Northbridge Advisory</span>
           </div>
           <div className="flex items-center gap-1 sm:gap-2">
-            {me.authMode === 'dev' ? <DevUserSwitcher /> : <SignedInUser />}
+            {me.readOnly ? <DemoVisitor /> : me.authMode === 'dev' ? <DevUserSwitcher /> : <SignedInUser />}
             <ThemeToggle />
           </div>
         </div>

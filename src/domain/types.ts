@@ -6,4 +6,6 @@ export interface Actor {
   name: string;
   email: string;
   role: Role;
+  /** The public demo visitor: may read like a partner, may never change anything (enforced in /api and runTool). */
+  readOnly: boolean;
 }

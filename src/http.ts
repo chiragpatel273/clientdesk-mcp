@@ -14,7 +14,7 @@ import type { Db } from './db/index.js';
 import { projectRoot } from './db/migrate.js';
 import { recordAudit } from './domain/audit.js';
 import { getDocument } from './domain/documents.js';
-import { findActorByEmail } from './domain/staff.js';
+import { findActorByEmail, findActorById } from './domain/staff.js';
 import type { Actor } from './domain/types.js';
 import { ensureMatch } from './domain/intake.js';
 import { canSeeDocument } from './mcp/document-access.js';
@@ -97,6 +97,8 @@ export function createHttpApp(deps: HttpDeps): Express {
 
   const app = createMcpExpressApp(config.allowedHosts ? { allowedHosts: config.allowedHosts } : {});
   app.disable('x-powered-by');
+  // Behind Render's proxy, req.ip must come from X-Forwarded-For (only the hops we trust), for the demo rate limit.
+  if (config.trustProxy > 0) app.set('trust proxy', config.trustProxy);
   app.use((_req, res, next) => {
     // Signed document links must never leak through the Referer header; nothing here should be framed.
     res.set({ 'referrer-policy': 'no-referrer', 'x-frame-options': 'DENY', 'x-content-type-options': 'nosniff' });
@@ -164,8 +166,7 @@ export function createHttpApp(deps: HttpDeps): Express {
       res.status(403).type('text/plain').send('This link is invalid or has expired. Ask Claude for a fresh one.');
       return;
     }
-    const [staff] = await db.query<{ email: string }>('select email from staff where id = $1', [staffId]);
-    const actor = staff ? await findActorByEmail(db, staff.email) : null;
+    const actor = await findActorById(db, staffId);
     const doc = await getDocument(db, documentId);
     if (!actor || !doc) {
       res.status(404).type('text/plain').send('Document not found.');

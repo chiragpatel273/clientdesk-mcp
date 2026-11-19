@@ -21,6 +21,14 @@ export interface ToolResult<T extends Record<string, unknown>> {
   detail?: string;
 }
 
+export interface RunToolOptions {
+  /** The tool changes data (its annotation says `readOnlyHint: false`). Read-only actors are refused before it runs. */
+  writes?: boolean;
+}
+
+export const READ_ONLY_MESSAGE =
+  'This is a read-only demo session, so nothing can be changed. Every attempt is logged.';
+
 /**
  * Every tool handler runs through here, so no tool can skip the audit log.
  * Errors are logged and returned as a generic message; internals never reach the model.
@@ -30,10 +38,20 @@ export async function runTool<T extends Record<string, unknown>>(
   tool: string,
   input: unknown,
   handler: () => Promise<ToolResult<T>>,
+  options: RunToolOptions = {},
 ): Promise<CallToolResult> {
   const started = performance.now();
   try {
-    const result = await handler();
+    // Checked here, not in each tool, so a new write tool can't forget it.
+    const result: ToolResult<Record<string, unknown>> =
+      options.writes && ctx.actor.readOnly
+        ? {
+            outcome: 'denied',
+            text: READ_ONLY_MESSAGE,
+            structured: { status: 'denied', message: READ_ONLY_MESSAGE },
+            detail: 'read-only session',
+          }
+        : await handler();
     await recordAudit(ctx.db, {
       staffId: ctx.actor.staffId,
       tool,

@@ -37,6 +37,13 @@ const EnvSchema = z.object({
   /** A regular (non-DCR) OAuth client for the dashboard's own sign-in. Redirect URI: `PUBLIC_URL/auth/callback`. */
   DASHBOARD_CLIENT_ID: z.string().min(1).optional(),
   DASHBOARD_CLIENT_SECRET: z.string().min(1).optional(),
+  /** Shows "Try the demo" on the dashboard sign-in page: a read-only, partner-level session as the demo visitor. */
+  DEMO_LOGIN: z
+    .enum(['true', 'false', '1', '0'])
+    .default('false')
+    .transform((v) => v === 'true' || v === '1'),
+  /** Reverse proxies in front of the server (Render: 1), so rate limits see the visitor's IP. */
+  TRUST_PROXY: z.coerce.number().int().min(0).max(5).default(0),
   /** Signs dashboard session cookies. */
   SESSION_SECRET: secret.optional(),
   /** Signs the short-lived document links that tools return. */
@@ -113,6 +120,8 @@ export type Config = {
   /** Set exactly when `authMode` is `oauth`. */
   oauth: OAuthConfig | undefined;
   dashboardClient: { id: string; secret: string } | undefined;
+  demoLogin: boolean;
+  trustProxy: number;
   sessionSecret: string;
   linkSecret: string;
   allowedHosts: string[] | undefined;
@@ -237,6 +246,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       parsed.DASHBOARD_CLIENT_ID && parsed.DASHBOARD_CLIENT_SECRET
         ? { id: parsed.DASHBOARD_CLIENT_ID, secret: parsed.DASHBOARD_CLIENT_SECRET }
         : undefined,
+    demoLogin: parsed.DEMO_LOGIN,
+    trustProxy: parsed.TRUST_PROXY,
     sessionSecret: parsed.SESSION_SECRET ?? randomSecret(),
     linkSecret: parsed.LINK_SECRET ?? randomSecret(),
     allowedHosts,

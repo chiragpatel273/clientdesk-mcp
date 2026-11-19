@@ -78,6 +78,71 @@ Publish real numbers even when they miss a target, plus what was changed to impr
 
 If a phase runs over, cut the HubSpot adapter and the demo login first, never the accuracy report.
 
+## v2 (started 2026-11-19, branch `v2`)
+
+Goal: make ClientDesk a proof-of-work for **senior full-stack / tech lead** roles: (a) a recruiter can try it with no
+account, (b) it is measurably better, (c) it shows production engineering: background jobs, multi-tenancy, E2E
+tests and LLM cost tracking. Everything is built and tested offline (rules extractor, `local-hash-v1`), with no
+paid API calls and no deploys. The owner reviews at the end; decisions taken on the owner's behalf are logged below.
+
+Build order: 1 → 2 → 3 → 5 → 6 → 4. Every phase must pass `npm run check` and `npm run eval -- --extractor=rules
+--check`, get a security review, and be committed on its own.
+
+| #   | Phase                    | Goal                                                                 | Gate                                                                                                                       | Status |
+| --- | ------------------------ | -------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- | ------ |
+| 1   | Try the demo             | No login wall: a read-only demo session, enforced on the server      | Fresh browser → "Try the demo" → Overview, Inbox, Review, Audit, Accuracy; every write refused (403) and audited           | Done   |
+| 2   | Search and citation miss | Right page wins; Voyage documented as the production embedder        | Offline citation ≥ 95%, 0 wrong-client filings, no metric worse (or the best honest result, explained)                     | Todo   |
+| 3   | Batch intake + job queue | Upload many documents; a Postgres job queue processes them           | 10 uploads process in the background with visible progress; a forced failure retries, then dead-letters; worker tests      | Todo   |
+| 5   | Playwright E2E           | The main journeys tested in a real browser, in CI                    | `npx playwright test` passes locally in under ~3 minutes                                                                   | Todo   |
+| 6   | LLM usage and cost       | Every model call recorded (tokens, cost, latency); a Usage page      | An eval run and a batch upload both show on the Usage page; recording tested                                               | Todo   |
+| 4   | Multiple firms           | `firm_id` everywhere, isolation in the domain layer and Postgres RLS | All tests, E2E and eval pass; cross-firm reads, writes, search, links and filings denied and audited, even with forged ids | Todo   |
+
+### Phase plans
+
+**Phase 1: Try the demo.**
+
+- Schema: migration `003_demo_visitor.sql` adds `staff.read_only boolean not null default false`. The demo visitor
+  (`st_demo`, `demo@northbridge.example`, role `partner`, read-only) is part of the seeded firm, and start-up adds
+  it to an already-seeded database.
+- `Actor.readOnly`. Enforced in two central places, so new routes and tools inherit it: the `/api` router refuses
+  every non-GET request from a read-only actor (403 + `denied` audit row), and `runTool()` refuses tools declared
+  as writes (`file_document`, `send_to_review`, `add_crm_note`) with `status: 'denied'` + audit row.
+- `POST /auth/demo` (only when `DEMO_LOGIN=true`): issues a 2-hour session cookie marked `demo`, audited as
+  `auth:demo_login`, rate-limited per IP (in memory: 5 a minute, 30 an hour). `GET /auth/options` tells the
+  sign-in page whether to show the button. A demo cookie is refused once `DEMO_LOGIN` is turned off.
+- The API reads a valid session cookie in both auth modes (dev mode falls back to the header), so the demo works
+  locally too. Dashboard: "Try the demo" on the sign-in page (and in the dev user picker), a "Demo mode: read-only,
+  fictional data" banner, "Exit demo" instead of the user switcher. Write controls stay visible: a visitor who tries
+  one sees the server's refusal and then finds it in the audit log, which demonstrates the rule better than a
+  hidden button.
+- `TRUST_PROXY` (hops, default 0; `1` on Render) so the rate limiter sees the visitor's IP, not the proxy's.
+- Risks: viewing an inbox document nobody has matched yet runs its extraction once (cached), as for staff; with a
+  paid extractor a visitor can cause at most one extraction per inbox document.
+- Risks: a public partner-level view shows every audit row, including inputs typed by the owner's own test
+  sessions. All data is fictional; the owner should still avoid typing anything real into the live connector.
+
+### Decisions made on the owner's behalf
+
+(Each with its reason. Newest last.)
+
+1. **Offline runs force offline settings.** Every check, eval and local server in v2 runs with
+   `EXTRACTOR=rules EMBEDDINGS=local STORAGE=local` (and a throwaway database) plus blank API keys in the command's
+   environment, because `.env` may hold real keys and S3 settings and `loadDotEnv()` would pick them up (real
+   environment variables win over `.env`).
+2. **The demo visitor is a partner-level, read-only staff row** (`st_demo`), not a role. Read-only is a property of
+   the actor checked centrally (the `/api` router and `runTool()`), so it composes with roles and needs no second
+   copy of the partner permissions. It is kept out of `STAFF` so `npm run workos:users` never creates a real login.
+3. **`render.yaml` turns `DEMO_LOGIN` on** (and `TRUST_PROXY=1`), because the live dashboard exists to be tried by
+   recruiters; the code default stays off. Nothing is deployed until the owner merges and syncs.
+4. **Demo sessions last 2 hours** (staff sessions 8) and carry a `demo` claim, so turning `DEMO_LOGIN` off ends
+   them at once even though the cookie is still validly signed.
+5. **The demo rate limit is in memory** (5 a minute, 30 an hour per IP). Render's free plan runs one instance;
+   with several instances each would count separately, which only loosens the limit. Redis would be the next step.
+
+### Blocked / needs owner
+
+(Nothing yet.)
+
 ## Status
 
 - **Day 1 (done):** schema and migrations, PGlite/pg `Db`, demo firm, `get_client` with access check + audit, stateless

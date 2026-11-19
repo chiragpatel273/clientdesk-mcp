@@ -1,5 +1,5 @@
 import type { Db } from '../db/index.js';
-import { CLIENTS, CONTACTS, NOTES, OPEN_ITEMS, STAFF } from './firm.js';
+import { CLIENTS, CONTACTS, DEMO_VISITOR, NOTES, OPEN_ITEMS, STAFF } from './firm.js';
 
 export async function isSeeded(db: Db): Promise<boolean> {
   const rows = await db.query<{ n: number }>('select count(*)::int as n from staff');
@@ -16,6 +16,7 @@ export async function seedDemoFirm(db: Db): Promise<void> {
       s.role,
     ]);
   }
+  await ensureDemoVisitor(db);
   for (const c of CLIENTS) {
     await db.query(
       'insert into clients (id, name, entity_type, fiscal_year_end, tax_id_last4) values ($1, $2, $3, $4, $5)',
@@ -49,6 +50,16 @@ export async function seedDemoFirm(db: Db): Promise<void> {
       n.createdAt,
     ]);
   }
+}
+
+/** Adds the read-only demo visitor if it's missing (databases seeded before v2 don't have it). */
+export async function ensureDemoVisitor(db: Db): Promise<boolean> {
+  const rows = await db.query(
+    `insert into staff (id, name, email, role, read_only) values ($1, $2, $3, $4, true)
+     on conflict (id) do nothing returning id`,
+    [DEMO_VISITOR.id, DEMO_VISITOR.name, DEMO_VISITOR.email, DEMO_VISITOR.role],
+  );
+  return rows.length > 0;
 }
 
 /** Empties every table (keeps the schema). Used by `npm run seed -- --reset`. */

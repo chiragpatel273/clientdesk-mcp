@@ -24,6 +24,10 @@ services:
         sync: false
       - key: DASHBOARD_CLIENT_SECRET
         sync: false
+      - key: DEMO_LOGIN
+        value: 'true' # "Try the demo" on the sign-in page: a read-only, partner-level session (rate-limited)
+      - key: TRUST_PROXY
+        value: '1' # Render's proxy sits in front: the demo rate limit then sees the visitor's IP
       - key: SESSION_SECRET
         generateValue: true
       - key: LINK_SECRET

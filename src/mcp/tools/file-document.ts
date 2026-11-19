@@ -51,99 +51,105 @@ export function registerFileDocument(server: McpServer, ctx: ToolContext): void 
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     async (input) =>
-      runTool<Output>(ctx, 'file_document', input, async () => {
-        // Access first, from the id given now: never trust that an earlier tool call checked it.
-        if (!(await canAccessClient(ctx.db, ctx.actor, input.clientId))) {
-          const message = 'You are not assigned to that client, so you cannot file documents for it.';
-          return {
-            outcome: 'denied',
-            text: message,
-            structured: { status: 'denied', message },
-            detail: `client ${input.clientId}`,
-          };
-        }
-        const doc = await getDocument(ctx.db, input.documentId);
-        if (!doc) {
-          const message = `No document with id ${input.documentId}.`;
-          return { outcome: 'ok', text: message, structured: { status: 'not_found', message } };
-        }
-        if (doc.status !== 'inbox') {
-          const message =
-            doc.status === 'review'
-              ? 'This document is in the review queue; a partner resolves it from the dashboard.'
-              : 'This document is already filed.';
-          return {
-            outcome: 'ok',
-            text: message,
-            structured: { status: 'refused', message },
-            detail: `status ${doc.status}`,
-          };
-        }
+      runTool<Output>(
+        ctx,
+        'file_document',
+        input,
+        async () => {
+          // Access first, from the id given now: never trust that an earlier tool call checked it.
+          if (!(await canAccessClient(ctx.db, ctx.actor, input.clientId))) {
+            const message = 'You are not assigned to that client, so you cannot file documents for it.';
+            return {
+              outcome: 'denied',
+              text: message,
+              structured: { status: 'denied', message },
+              detail: `client ${input.clientId}`,
+            };
+          }
+          const doc = await getDocument(ctx.db, input.documentId);
+          if (!doc) {
+            const message = `No document with id ${input.documentId}.`;
+            return { outcome: 'ok', text: message, structured: { status: 'not_found', message } };
+          }
+          if (doc.status !== 'inbox') {
+            const message =
+              doc.status === 'review'
+                ? 'This document is in the review queue; a partner resolves it from the dashboard.'
+                : 'This document is already filed.';
+            return {
+              outcome: 'ok',
+              text: message,
+              structured: { status: 'refused', message },
+              detail: `status ${doc.status}`,
+            };
+          }
 
-        const extraction = await ensureExtraction(ctx.db, ctx.services, doc);
-        const match = await computeMatch(ctx.db, ctx.services, doc, extraction);
-        const best = match.candidates[0];
-        if (match.decision !== 'file' || best?.clientId !== input.clientId) {
-          const why =
-            match.decision !== 'file'
-              ? await redactHiddenClients(ctx, match.reason, match.candidates)
-              : `the clear match is a different client, not ${input.clientId}`;
-          const message = `Not filed: ${why} Send it to review instead.`;
-          return {
-            outcome: 'ok',
-            text: message,
-            structured: { status: 'refused', message },
-            detail: `refused: ${why}`,
-          };
-        }
+          const extraction = await ensureExtraction(ctx.db, ctx.services, doc);
+          const match = await computeMatch(ctx.db, ctx.services, doc, extraction);
+          const best = match.candidates[0];
+          if (match.decision !== 'file' || best?.clientId !== input.clientId) {
+            const why =
+              match.decision !== 'file'
+                ? await redactHiddenClients(ctx, match.reason, match.candidates)
+                : `the clear match is a different client, not ${input.clientId}`;
+            const message = `Not filed: ${why} Send it to review instead.`;
+            return {
+              outcome: 'ok',
+              text: message,
+              structured: { status: 'refused', message },
+              detail: `refused: ${why}`,
+            };
+          }
 
-        const taxYear = input.taxYear ?? inferTaxYear(extraction);
-        const docType = extraction.docType;
-        if (
-          !(await markFiled(ctx.db, {
-            id: doc.id,
-            clientId: best.clientId,
-            taxYear,
-            docType,
-            staffId: ctx.actor.staffId,
-          }))
-        ) {
-          const message = 'The document changed while filing (someone else may have processed it). Check the inbox.';
-          return { outcome: 'ok', text: message, structured: { status: 'refused', message } };
-        }
-        await retitleAndReindex(ctx.db, ctx.services.embedder, doc.id, extraction);
-        const filed = (await getDocument(ctx.db, doc.id))!;
-        const openItemClosed = input.openItemId
-          ? await closeOpenItem(ctx.db, { id: input.openItemId, clientId: best.clientId, documentId: doc.id })
-          : null;
-
-        const link = ctx.services.links.url(doc.id, ctx.actor.staffId);
-        const message =
-          `Filed "${filed.title}" under ${best.name} as ${docType}${taxYear ? ` for ${taxYear}` : ''}.` +
-          (input.openItemId
-            ? openItemClosed
-              ? ` Closed open item: ${openItemClosed.description}.`
-              : ' The open item was not closed (not found, not open, or for another client).'
-            : '');
-        return {
-          outcome: 'ok',
-          text: `${message}\nLink: ${link}`,
-          structured: {
-            status: 'filed',
-            message,
-            document: {
+          const taxYear = input.taxYear ?? inferTaxYear(extraction);
+          const docType = extraction.docType;
+          if (
+            !(await markFiled(ctx.db, {
               id: doc.id,
-              title: filed.title,
               clientId: best.clientId,
-              clientName: best.name,
               taxYear,
               docType,
-              link,
+              staffId: ctx.actor.staffId,
+            }))
+          ) {
+            const message = 'The document changed while filing (someone else may have processed it). Check the inbox.';
+            return { outcome: 'ok', text: message, structured: { status: 'refused', message } };
+          }
+          await retitleAndReindex(ctx.db, ctx.services.embedder, doc.id, extraction);
+          const filed = (await getDocument(ctx.db, doc.id))!;
+          const openItemClosed = input.openItemId
+            ? await closeOpenItem(ctx.db, { id: input.openItemId, clientId: best.clientId, documentId: doc.id })
+            : null;
+
+          const link = ctx.services.links.url(doc.id, ctx.actor.staffId);
+          const message =
+            `Filed "${filed.title}" under ${best.name} as ${docType}${taxYear ? ` for ${taxYear}` : ''}.` +
+            (input.openItemId
+              ? openItemClosed
+                ? ` Closed open item: ${openItemClosed.description}.`
+                : ' The open item was not closed (not found, not open, or for another client).'
+              : '');
+          return {
+            outcome: 'ok',
+            text: `${message}\nLink: ${link}`,
+            structured: {
+              status: 'filed',
+              message,
+              document: {
+                id: doc.id,
+                title: filed.title,
+                clientId: best.clientId,
+                clientName: best.name,
+                taxYear,
+                docType,
+                link,
+              },
+              openItemClosed,
             },
-            openItemClosed,
-          },
-          detail: `filed to ${best.clientId} at ${best.confidence}`,
-        };
-      }),
+            detail: `filed to ${best.clientId} at ${best.confidence}`,
+          };
+        },
+        { writes: true },
+      ),
   );
 }

@@ -16,7 +16,13 @@ export interface Me {
   name: string;
   email: string;
   role: Role;
+  /** The "Try the demo" visitor: the server refuses every change. */
+  readOnly: boolean;
   authMode: AuthMode;
+}
+
+export interface AuthOptions {
+  demoLogin: boolean;
 }
 
 export interface StaffMember {
@@ -282,6 +288,8 @@ export const api = {
     }),
   accuracy: () => request<AccuracyReport>('GET', '/api/accuracy'),
   logout: () => request<unknown>('POST', '/auth/logout'),
+  authOptions: () => request<AuthOptions>('GET', '/auth/options'),
+  startDemo: () => request<{ ok: true }>('POST', '/auth/demo'),
 };
 
 export function documentFileUrl(id: string): string {

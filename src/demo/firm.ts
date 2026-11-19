@@ -11,6 +11,17 @@ export const STAFF = [
   { id: 'st_ana', name: 'Ana Costa', email: 'ana@northbridge.example', role: 'assistant' },
 ] as const;
 
+/**
+ * The public "Try the demo" visitor: a partner-level view of the whole firm, read-only on the server. Not in STAFF,
+ * so `npm run workos:users` never creates a real sign-in for it; only `POST /auth/demo` (DEMO_LOGIN=true) uses it.
+ */
+export const DEMO_VISITOR = {
+  id: 'st_demo',
+  name: 'Demo Visitor',
+  email: 'demo@northbridge.example',
+  role: 'partner',
+} as const;
+
 type EntityType = 'individual' | 'company' | 'partnership' | 'trust';
 
 export const CLIENTS: {

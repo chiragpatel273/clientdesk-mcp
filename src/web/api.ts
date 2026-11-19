@@ -19,7 +19,7 @@ import {
   type DocumentRecord,
 } from '../domain/documents.js';
 import { addNote } from '../domain/open-items.js';
-import { findActorByEmail } from '../domain/staff.js';
+import { findActorByEmail, findActorById } from '../domain/staff.js';
 import type { Actor } from '../domain/types.js';
 import { ensureMatch } from '../domain/intake.js';
 import { canSeeDocument } from '../mcp/document-access.js';
@@ -64,26 +64,53 @@ export async function sendDocumentFile(res: Response, services: AppServices, doc
     .send(Buffer.from(bytes));
 }
 
+/** Names a refused write for the audit log, e.g. `resolve_review`. */
+function writeActionName(path: string): string {
+  if (/^\/review\/[^/]+\/resolve$/.test(path)) return 'resolve_review';
+  if (path === '/documents') return 'upload';
+  return 'write';
+}
+
+/**
+ * The staff member behind a dashboard request. A demo session is honoured only while DEMO_LOGIN is on, and is always
+ * read-only whatever the staff row says.
+ */
+export async function resolveDashboardActor(req: Request, db: Db, config: Config): Promise<Actor | null> {
+  const session = await readSession(req, config.sessionSecret);
+  if (session && !(session.demo && !config.demoLogin)) {
+    const actor = await findActorById(db, session.staffId);
+    if (actor) return session.demo ? { ...actor, readOnly: true } : actor;
+  }
+  if (config.authMode === 'dev') return findActorByEmail(db, req.header(DEV_USER_HEADER) ?? config.devUser);
+  return null;
+}
+
 export function createApiRouter(deps: Deps): Router {
   const { db, config, services } = deps;
   const router = Router();
 
-  // Who is calling: the dev header in dev mode, the session cookie in oauth mode.
+  // Who is calling: a session cookie (dashboard sign-in or "Try the demo") in either auth mode, else, in dev mode
+  // only, the dev header.
   router.use(async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const actor =
-        config.authMode === 'dev'
-          ? await findActorByEmail(db, req.header(DEV_USER_HEADER) ?? config.devUser)
-          : await (async () => {
-              const staffId = await readSession(req, config.sessionSecret);
-              if (!staffId) return null;
-              const [row] = await db.query<{ email: string }>('select email from staff where id = $1', [staffId]);
-              return row ? findActorByEmail(db, row.email) : null;
-            })();
+      const actor = await resolveDashboardActor(req, db, config);
       if (!actor) return error(res, 401, 'Not signed in');
       req.staff = actor;
       // State-changing requests must carry a custom header: a cross-site form or image can't add one.
       if (req.method !== 'GET' && req.header(CSRF_HEADER) !== '1') return error(res, 403, 'Missing CSRF header');
+      // Read-only (demo) sessions: every write route is refused here, before its body is read, so routes added later
+      // inherit the rule.
+      if (actor.readOnly && req.method !== 'GET' && req.method !== 'HEAD') {
+        await recordAudit(db, {
+          staffId: actor.staffId,
+          tool: `dashboard:${writeActionName(req.path)}`,
+          input: { method: req.method, path: req.path.slice(0, 200) },
+          outcome: 'denied',
+          detail: 'read-only session',
+          durationMs: 0,
+        });
+        return error(res, 403, 'This is a read-only demo session, so nothing can be changed.');
+      }
       return next();
     } catch (err) {
       return next(err);
@@ -95,13 +122,21 @@ export function createApiRouter(deps: Deps): Router {
 
   router.get('/me', (req, res) => {
     const a = req.staff!;
-    res.json({ staffId: a.staffId, name: a.name, email: a.email, role: a.role, authMode: config.authMode });
+    res.json({
+      staffId: a.staffId,
+      name: a.name,
+      email: a.email,
+      role: a.role,
+      readOnly: a.readOnly,
+      authMode: config.authMode,
+    });
   });
 
   router.get('/staff', async (_req, res) => {
     if (config.authMode !== 'dev') return error(res, 404, 'Not available');
+    // The demo visitor isn't a person to switch to; it is reached through "Try the demo".
     const staff = await db.query<{ email: string; name: string; role: string }>(
-      'select email, name, role from staff order by role desc, name',
+      'select email, name, role from staff where not read_only order by role desc, name',
     );
     return res.json({ staff });
   });

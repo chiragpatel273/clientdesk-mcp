@@ -25,22 +25,38 @@ function cookieOptions(secure: boolean, maxAgeMs: number) {
 
 const key = (secret: string) => new TextEncoder().encode(secret);
 
-export async function issueSession(res: Response, secret: string, staffId: string, secure: boolean): Promise<void> {
-  const token = await new SignJWT({ kind: 'session' })
+const DEMO_SESSION_HOURS = 2;
+
+export interface Session {
+  staffId: string;
+  /** Started from "Try the demo": refused again as soon as DEMO_LOGIN is turned off. */
+  demo: boolean;
+}
+
+export async function issueSession(
+  res: Response,
+  secret: string,
+  staffId: string,
+  secure: boolean,
+  options: { demo?: boolean } = {},
+): Promise<void> {
+  const hours = options.demo ? DEMO_SESSION_HOURS : SESSION_HOURS;
+  const token = await new SignJWT({ kind: 'session', ...(options.demo ? { demo: true } : {}) })
     .setProtectedHeader({ alg: 'HS256' })
     .setSubject(staffId)
     .setIssuedAt()
-    .setExpirationTime(`${SESSION_HOURS}h`)
+    .setExpirationTime(`${hours}h`)
     .sign(key(secret));
-  res.cookie(SESSION_COOKIE, token, cookieOptions(secure, SESSION_HOURS * 3600 * 1000));
+  res.cookie(SESSION_COOKIE, token, cookieOptions(secure, hours * 3600 * 1000));
 }
 
-export async function readSession(req: Request, secret: string): Promise<string | null> {
+export async function readSession(req: Request, secret: string): Promise<Session | null> {
   const token = readCookie(req, SESSION_COOKIE);
   if (!token) return null;
   try {
     const { payload } = await jwtVerify(token, key(secret), { algorithms: ['HS256'] });
-    return payload.kind === 'session' && typeof payload.sub === 'string' ? payload.sub : null;
+    if (payload.kind !== 'session' || typeof payload.sub !== 'string') return null;
+    return { staffId: payload.sub, demo: payload.demo === true };
   } catch {
     return null;
   }
