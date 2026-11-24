@@ -170,12 +170,12 @@ function Report({ report }: { report: AccuracyReport }) {
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <FlaskConical className="size-4 text-muted-foreground" /> Robustness check
+              <FlaskConical className="size-4 text-muted-foreground" /> Wider check
             </CardTitle>
             <CardDescription>
               Not a target: both question variants for every searchable document (
-              {formatInt(report.robustness.questions)} questions), so a ranking change that only helps the 30 asked
-              questions shows up here.
+              {formatInt(report.robustness.questions)} questions, including the 30 asked ones). Looked at while tuning,
+              so it shows breadth but is not an independent test.
             </CardDescription>
           </CardHeader>
           <CardContent className="grid gap-3 text-sm">

@@ -12,7 +12,8 @@ description: Change the ClientDesk database schema with a new numbered SQL migra
    - `firm_id text not null default nullif(current_setting('app.firm_id', true), '') references firms (id)`;
    - same-firm foreign keys, e.g. `foreign key (firm_id, client_id) references clients (firm_id, id)`;
    - `alter table … enable row level security` and the `firm_isolation` policy (`using` and `with check`
-     `firm_id = current_setting('app.firm_id', true)`). Grants to `clientdesk_app` come from default privileges.
+     `firm_id = current_setting('app.firm_id', true)`). Since 008 nothing is granted by default: add `grant select, insert,
+update, delete on … to clientdesk_app` (and `usage, select` on its sequence) in the same migration.
 4. Never add columns for full tax ids, account numbers or passwords. Store the last 4 digits at most.
 5. Add indexes for the queries you are about to write (client_id plus a date is the usual pair).
 6. If `resetData()` in `src/demo/seed.ts` must truncate the new table, add it there.

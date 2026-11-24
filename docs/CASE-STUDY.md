@@ -49,12 +49,11 @@ sensitive fields masked, outcome and duration.
 firm, and Postgres row-level security enforces the same rule again: each query runs as a role without bypass rights,
 with the firm set for that transaction only. Same-firm foreign keys make a cross-firm reference impossible even for a
 bug that slips past both. A second fictional firm with its own "Acme Ltd" proves it: 21 tests try cross-firm reads,
-writes, searches, filings, links and job retries with forged ids. Another firm's id answers "not found", so ids can't
-be probed, and the attempt is logged as denied.
+writes, searches, filings, links and job retries with forged ids. An id from another firm is answered and logged exactly like one that doesn't exist, so ids can't be probed; only the owner of the deployment sees the attempt.
 
 **Background work that fails safely.** Batch intake runs on a job queue inside Postgres (`FOR UPDATE SKIP LOCKED`, no
-Redis): each document goes through stored → text → indexed → fields → matched → filed or review, each step audited
-and safe to repeat. Failures retry with exponential backoff, then land in a dead-letter state and the document goes
+Redis): each document goes through stored → text → indexed → fields → matched → filed or review, each step audited.
+Filing, its note, its audit row and the job's state are written in one statement, so a crash can't leave them disagreeing. Failures retry with exponential backoff, then land in a dead-letter state and the document goes
 back to people; a stuck worker's job is reclaimed. Filing follows exactly the same rules as filing through Claude.
 
 **Costs you can see.** Every model call (extraction and embeddings) is recorded with tokens, estimated cost from one
@@ -78,23 +77,23 @@ missing fields, prior-year and multi-page documents, a non-client. Plus 30 quest
 | Search hit rate (top 5) | 100%                         | **100%**                         | ≥ 90%  |
 | Citation accuracy       | **100%**                     | 93.3% (missed)                   | ≥ 95%  |
 
-The Groq run missed citation accuracy: 2 of 30 questions cited the wrong page or a similar form first. v2 fixed it
-with three general ranking changes (below) and measured the fix offline: 93.3% to 100% on the corrected question
-set, and 93.1% to 98.6% on a 72-question robustness set that guards against tuning to the asked questions. The Groq
-column predates v2 and needs a rerun. Search uses `local-hash-v1` embeddings in both columns: a keyword-style
+The Groq run missed citation accuracy: 2 of 30 questions cited the wrong page or a similar form first. v2 changed the
+ranking and measured it offline: 29 of 30 correct (96.7%) before, 30 of 30 after, on the same questions. The Groq column
+predates v2 and needs a rerun.
+Search uses `local-hash-v1` embeddings in both columns: a keyword-style
 embedder chosen to keep the demo free to run. Voyage embeddings (the production option) and the Claude extractor are
 supported but not measured yet.
 
 What changed along the way (from the report):
 
-- v2: one of the two citation misses was a question with two right answers (one bank sent the same person two forms
-  that year); the question set was corrected and the fix reported as a dataset fix. The other was a closing balance
-  on page 2 ranked below page 1, because the words that pick the document (client, bank, account) are on page 1.
-  Passages now repeat their document's identifiers and name the fields they hold ("balance at the end of the
-  period"), the page within a document is chosen by the words its pages don't share, and query-term coverage is a
-  fourth ranked list. An ablation of each change is in the report; one robustness question got worse (a near-tie
-  that needs semantic embeddings) and is published.
-
+- v2: of the two citation misses, one was a question with two right answers (one bank sent the same person two forms
+  that year). Six questions of that kind were reworded, and the effect is reported separately: the rewording lowers v1's
+  score from 96.7% to 93.3%. The other miss was a closing balance on page 2 ranked below page 1, because the words that
+  pick the document (client, bank, account) are on page 1. Passages now repeat their document's identifiers and name
+  the fields they hold ("balance at the end of the period"), the page within a document is chosen by the words its
+  pages don't share, and query-term coverage is a fourth ranked list. A wider 72-question check went from 91.7% to
+  95.8% (original wording), with one question worse; its misses were looked at while tuning, so it is not an
+  independent test.
 - A first run showed citation accuracy at 56.7%. Adding a context line to every passage, descriptive titles for
   filed documents and an exact-identifier signal, together with fixing two labelling mistakes in the question set,
   brought it to 96.7%. The report says plainly which part came from which.
@@ -111,14 +110,14 @@ TypeScript, MCP SDK (Streamable HTTP + stdio), Postgres + pgvector with row-leve
 queue (Neon; PGlite locally and in tests), Claude API
 (supported) and Groq gpt-oss (measured) with structured outputs, pdf.js, WorkOS AuthKit (OAuth with dynamic client registration),
 Amazon S3, React + Vite + Tailwind + shadcn/ui, Recharts, Vitest, Playwright, Render. Built with Claude Code, using project skills for adding
-tools and migrations and a security-review skill run before each commit.
+tools and migrations, a security-review checklist, and an independent review by a second agent that found (before release)
+a way for a public visitor to disturb batch intake and a 100 KB file that froze the server; both fixed and tested.
 
 ## Numbers that matter to a client
 
-- 174 automated tests and 9 Playwright end-to-end tests, including a denied-path test with an audit check for every
+- 202 automated tests and 14 Playwright end-to-end tests, including a denied-path test with an audit check for every
   tool and 21 cross-firm isolation tests.
-- Citation accuracy from 93.3% to 100% offline after v2's ranking changes (98.6% on a 72-question robustness set
-  that guards against tuning to the asked questions).
+- Citation accuracy offline: 29 of 30 before v2's ranking changes, 30 of 30 after, on the same questions.
 - 0 wrong-client filings on the labelled set; 98.1% field accuracy; 10% sent to review.
 - Video: https://youtu.be/hFSXsezX2ac · Repo: https://github.com/chiragpatel273/clientdesk-mcp · Live dashboard:
   https://clientdesk-mcp.onrender.com/dashboard ("Try the demo", no account needed)

@@ -36,7 +36,7 @@ export function registerSendToReview(server: McpServer, ctx: ToolContext): void 
           if (!doc) {
             const message = `No document with id ${input.documentId}.`;
             return {
-              ...(await notFoundAudit(ctx, 'document', input.documentId)),
+              ...(await notFoundAudit(ctx, 'send_to_review', 'document', input.documentId)),
               text: message,
               structured: { status: 'not_found', message },
             };

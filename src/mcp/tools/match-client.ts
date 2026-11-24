@@ -2,8 +2,8 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { partitionByAccess } from '../../domain/access.js';
 import { getDocument } from '../../domain/documents.js';
-import { computeMatch, ensureExtraction } from '../../domain/intake.js';
-import { canSeeDocument, redactHiddenClients, notFoundAudit } from '../document-access.js';
+import { computeMatch, ensureExtraction, ensureText } from '../../domain/intake.js';
+import { canSeeDocument, redactHiddenClients, notFoundAudit, STILL_PROCESSING } from '../document-access.js';
 import { runTool, type ToolContext } from '../run-tool.js';
 
 export const MatchClientOutput = {
@@ -35,70 +35,85 @@ export function registerMatchClient(server: McpServer, ctx: ToolContext): void {
       annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     },
     async (input) =>
-      runTool<Output>(ctx, 'match_client', input, async () => {
-        const doc = await getDocument(ctx.db, input.documentId);
-        if (!doc) {
-          const message = `No document with id ${input.documentId}.`;
-          return {
-            ...(await notFoundAudit(ctx, 'document', input.documentId)),
-            text: message,
-            structured: { status: 'not_found', message },
-          };
-        }
-        if (doc.status === 'filed') {
-          const access = await canSeeDocument(ctx, doc, null);
-          const message = access.allowed
-            ? `${doc.title} is already filed under ${doc.clientName}.`
-            : 'This document is already filed under a client you are not assigned to.';
-          return {
-            outcome: access.allowed ? 'ok' : 'denied',
-            text: message,
-            structured: { status: access.allowed ? 'already_filed' : 'denied', message },
-          };
-        }
+      runTool<Output>(
+        ctx,
+        'match_client',
+        input,
+        async () => {
+          const found = await getDocument(ctx.db, input.documentId);
+          if (!found) {
+            const message = `No document with id ${input.documentId}.`;
+            return {
+              ...(await notFoundAudit(ctx, 'match_client', 'document', input.documentId)),
+              text: message,
+              structured: { status: 'not_found', message },
+            };
+          }
+          if (found.status === 'processing') {
+            return {
+              outcome: 'denied',
+              text: STILL_PROCESSING,
+              structured: { status: 'denied', message: STILL_PROCESSING },
+              detail: 'still processing',
+            };
+          }
+          if (found.status === 'filed') {
+            const access = await canSeeDocument(ctx, found, null);
+            const message = access.allowed
+              ? `${found.title} is already filed under ${found.clientName}.`
+              : 'This document is already filed under a client you are not assigned to.';
+            return {
+              outcome: access.allowed ? 'ok' : 'denied',
+              text: message,
+              structured: { status: access.allowed ? 'already_filed' : 'denied', message },
+            };
+          }
 
-        const extraction = await ensureExtraction(ctx.db, ctx.services, doc);
-        const match = await computeMatch(ctx.db, ctx.services, doc, extraction);
-        const access = await canSeeDocument(ctx, doc, match);
-        if (!access.allowed) {
-          return {
-            outcome: 'denied',
-            text: access.reason,
-            structured: { status: 'denied', message: access.reason, recommendation: 'review' },
-            detail: access.detail,
-          };
-        }
+          const doc = await ensureText(ctx.db, ctx.services, found);
+          const extraction = await ensureExtraction(ctx.db, ctx.services, doc);
+          const match = await computeMatch(ctx.db, ctx.services, doc, extraction);
+          const access = await canSeeDocument(ctx, doc, match);
+          if (!access.allowed) {
+            return {
+              outcome: 'denied',
+              text: access.reason,
+              structured: { status: 'denied', message: access.reason, recommendation: 'review' },
+              detail: access.detail,
+            };
+          }
 
-        const { allowed } = await partitionByAccess(
-          ctx.db,
-          ctx.actor,
-          match.candidates.map((c) => c.clientId),
-        );
-        const visible = match.candidates.filter((c) => allowed.has(c.clientId));
-        const hidden = match.candidates.length - visible.length;
-        const recommendation = match.decision;
-        const best = visible[0];
-        const message =
-          recommendation === 'file' && best
-            ? `Best match: ${best.name} (${Math.round(best.confidence * 100)}%). Ask the user to confirm before filing.`
-            : `Needs review: ${await redactHiddenClients(ctx, match.reason, match.candidates)}`;
-        const lines = visible.map(
-          (c) => `- ${c.name} (${c.clientId}): ${Math.round(c.confidence * 100)}%. ${c.reasons.join('; ')}`,
-        );
-        if (hidden) lines.push(`- ${hidden} other candidate(s) you are not assigned to.`);
-        return {
-          outcome: 'ok',
-          text: [message, ...lines].join('\n'),
-          structured: {
-            status: recommendation === 'file' ? 'matched' : 'needs_review',
-            message,
-            recommendation,
-            candidates: visible,
-            hiddenCandidates: hidden,
-            threshold: ctx.services.filing.threshold,
-          },
-          detail: `${recommendation}: ${match.reason}`,
-        };
-      }),
+          const { allowed } = await partitionByAccess(
+            ctx.db,
+            ctx.actor,
+            match.candidates.map((c) => c.clientId),
+          );
+          const visible = match.candidates.filter((c) => allowed.has(c.clientId));
+          const hidden = match.candidates.length - visible.length;
+          const recommendation = match.decision;
+          const best = visible[0];
+          const message =
+            recommendation === 'file' && best
+              ? `Best match: ${best.name} (${Math.round(best.confidence * 100)}%). Ask the user to confirm before filing.`
+              : `Needs review: ${await redactHiddenClients(ctx, match.reason, match.candidates)}`;
+          const lines = visible.map(
+            (c) => `- ${c.name} (${c.clientId}): ${Math.round(c.confidence * 100)}%. ${c.reasons.join('; ')}`,
+          );
+          if (hidden) lines.push(`- ${hidden} other candidate(s) you are not assigned to.`);
+          return {
+            outcome: 'ok',
+            text: [message, ...lines].join('\n'),
+            structured: {
+              status: recommendation === 'file' ? 'matched' : 'needs_review',
+              message,
+              recommendation,
+              candidates: visible,
+              hiddenCandidates: hidden,
+              threshold: ctx.services.filing.threshold,
+            },
+            detail: `${recommendation}: ${match.reason}`,
+          };
+        },
+        { costly: true },
+      ),
   );
 }

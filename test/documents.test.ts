@@ -72,7 +72,7 @@ describe('document tools', () => {
         filename: 'b.txt',
         uploadedBy: 'st_tom',
       });
-      expect(second).toEqual({ id: first.id, duplicate: true });
+      expect(second).toEqual({ id: first.id, duplicate: true, jobId: null });
       await db.query('delete from documents where id = $1', [first.id]);
     });
   });
@@ -370,7 +370,8 @@ describe('document tools', () => {
 
     it('refuses an unassigned client and asks on ambiguity', async () => {
       expect(
-        (await call<{ status: string }>(tom, 'add_crm_note', { client: 'Lakeside', body: 'hello there' })).data.status,
+        (await call<{ status: string }>(tom, 'add_crm_note', { client: 'Lakeside Dental Group', body: 'hello there' }))
+          .data.status,
       ).toBe('denied');
       expect(await lastAudit(db)).toMatchObject({ staff_id: 'st_tom', tool: 'add_crm_note', outcome: 'denied' });
       const [notes] = await db.query<{ n: number }>(

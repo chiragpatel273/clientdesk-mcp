@@ -35,6 +35,8 @@ export interface Job {
   lastError: string | null;
   runAt: string;
   updatedAt: string;
+  /** Identifies this claim (not just the worker): only its holder may record the step. Empty unless claimed. */
+  lock: string;
 }
 
 type Row = {
@@ -51,9 +53,10 @@ type Row = {
   last_error: string | null;
   run_at: string;
   updated_at: string;
+  locked_by: string | null;
 };
 
-const COLUMNS = `id, firm_id, kind, batch_id, document_id, created_by, step, status, attempts, max_attempts, last_error,
+const COLUMNS = `id, firm_id, kind, batch_id, document_id, created_by, step, status, attempts, max_attempts, last_error, locked_by,
   to_char(run_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as run_at,
   to_char(updated_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as updated_at`;
 
@@ -71,6 +74,7 @@ const toJob = (r: Row): Job => ({
   lastError: r.last_error,
   runAt: r.run_at,
   updatedAt: r.updated_at,
+  lock: r.locked_by ?? '',
 });
 
 export async function getJob(db: Db, id: number): Promise<Job | null> {
@@ -86,42 +90,14 @@ export async function findJobByKey(db: Db, idempotencyKey: string): Promise<Job 
   return row ? toJob(row) : null;
 }
 
-/**
- * Adds a job. With an idempotency key, a second enqueue with the same key returns the first job instead of adding
- * one (a retried upload request can't process a document twice).
- */
-export async function enqueue(
-  db: Db,
-  input: { documentId: string; createdBy: string; batchId?: string | null; idempotencyKey?: string | null },
-  config: Pick<JobsConfig, 'maxAttempts'>,
-): Promise<{ job: Job; created: boolean }> {
-  const [row] = await db.query<Row>(
-    `insert into jobs (kind, batch_id, document_id, created_by, idempotency_key, max_attempts, firm_id)
-     values ('intake', $1, $2, $3, $4, $5, $6)
-     on conflict (idempotency_key) do nothing
-     returning ${COLUMNS}`,
-    [
-      input.batchId ?? null,
-      input.documentId,
-      input.createdBy,
-      input.idempotencyKey ?? null,
-      config.maxAttempts,
-      firmOf(db),
-    ],
-  );
-  if (row) return { job: toJob(row), created: true };
-  const existing = await findJobByKey(db, input.idempotencyKey!);
-  if (!existing) throw new Error('Job vanished after an idempotency conflict');
-  return { job: existing, created: false };
-}
-
 export function workerId(): string {
   return `w_${process.pid}_${randomBytes(3).toString('hex')}`;
 }
 
 /**
  * Takes the next job that is due, or one whose worker stopped answering (`running` past the stuck timeout), and
- * counts the attempt. Returns null when nothing is due.
+ * counts the attempt. Every claim gets its own lock token, so a loop whose job was taken over (even by another loop of the
+ * same worker) can no longer record anything. Returns null when nothing is due.
  */
 export async function claimNext(db: Db, worker: string, config: Pick<JobsConfig, 'stuckSeconds'>): Promise<Job | null> {
   const [row] = await db.query<Row>(
@@ -134,20 +110,143 @@ export async function claimNext(db: Db, worker: string, config: Pick<JobsConfig,
        for update skip locked
        limit 1)
      returning ${COLUMNS}`,
-    [worker, config.stuckSeconds],
+    [`${worker}:${randomBytes(6).toString('hex')}`, config.stuckSeconds],
   );
   return row ? toJob(row) : null;
 }
 
-/** A step succeeded: record it and queue the next one (attempts start again), or finish the job. */
-export async function advance(db: Db, job: Job, worker: string, step: Step, done: boolean): Promise<boolean> {
-  const rows = await db.query(
-    `update jobs set step = $3, status = $4, attempts = 0, last_error = null, run_at = now(), locked_by = null,
-            locked_at = null, updated_at = now(), finished_at = case when $4 = 'done' then now() end
-     where id = $1 and locked_by = $2 and status = 'running' returning id`,
-    [job.id, worker, step, done ? 'done' : 'queued'],
+/** Still working on it: pushes back the moment the job counts as stuck. */
+export async function heartbeat(db: Db, job: Job): Promise<void> {
+  await db.query(`update jobs set locked_at = now() where id = $1 and locked_by = $2 and status = 'running'`, [
+    job.id,
+    job.lock,
+  ]);
+}
+
+/** Milliseconds until something can be claimed (a retry, or a stuck job); null when nothing is pending. */
+export async function nextDueMs(db: Db, config: Pick<JobsConfig, 'stuckSeconds'>): Promise<number | null> {
+  const [row] = await db.query<{ ms: number | null }>(
+    `select (extract(epoch from min(case when status = 'queued' then run_at
+                                         else locked_at + make_interval(secs => $1) end) - now()) * 1000)::float8 as ms
+     from jobs where status in ('queued', 'running')`,
+    [config.stuckSeconds],
   );
-  // No row: the job was reclaimed as stuck by another worker meanwhile; that worker now owns it.
+  return row?.ms === null || row?.ms === undefined ? null : Math.max(0, Number(row.ms));
+}
+
+/** What every job audit row holds: ids only. */
+const auditInput = (job: Job) =>
+  JSON.stringify({ jobId: job.id, documentId: job.documentId, batchId: job.batchId, attempt: job.attempts });
+
+/**
+ * A step succeeded: record it and queue the next one (attempts start again), or finish the job, with its audit row in
+ * the same statement. False: the job was reclaimed as stuck by another worker meanwhile, which now owns it.
+ */
+export async function advance(
+  db: Db,
+  job: Job,
+  step: Step,
+  done: boolean,
+  options: { detail?: string; auditAs?: string } = {},
+): Promise<boolean> {
+  const rows = await db.query(
+    `with j as (
+       update jobs set step = $3, status = $4, attempts = 0, last_error = null, run_at = now(), locked_by = null,
+              locked_at = null, updated_at = now(), finished_at = case when $4 = 'done' then now() end
+       where id = $1 and locked_by = $2 and status = 'running' returning id, firm_id, created_by
+     ), a as (
+       insert into audit_log (firm_id, staff_id, tool, input, outcome, detail, duration_ms)
+       select firm_id, created_by, $5, $6::jsonb, 'ok', $7, 0 from j
+     )
+     select id from j`,
+    [
+      job.id,
+      job.lock,
+      step,
+      done ? 'done' : 'queued',
+      `job:${options.auditAs ?? step}`,
+      auditInput(job),
+      options.detail ?? null,
+    ],
+  );
+  return rows.length === 1;
+}
+
+/**
+ * Files the job's document, writes the CRM note and the audit row and records the step, in one statement, only while
+ * this worker still owns the job and the document is still `processing`: a crash or a second worker can't leave a
+ * document filed without its job knowing, or file it twice. The job stays queued for one more step (rebuilding the
+ * document's search passages, now that its client and title are known). `db` is scoped to the job's firm.
+ */
+export async function completeFiling(
+  db: Db,
+  job: Job,
+  input: {
+    clientId: string;
+    taxYear: number | null;
+    docType: string | null;
+    title: string;
+    note: string;
+    detail: string;
+  },
+): Promise<boolean> {
+  const rows = await db.query(
+    `with mine as (
+       select id, document_id, created_by from jobs
+       where id = $1 and firm_id = $2 and locked_by = $3 and status = 'running' for update
+     ), d as (
+       update documents set client_id = $4, tax_year = $5, doc_type = $6, title = $7, status = 'filed',
+              filed_at = now(), filed_by = mine.created_by, review_reason = null,
+              content_version = content_version + 1
+       from mine where documents.id = mine.document_id and documents.firm_id = $2 and documents.status = 'processing'
+       returning documents.id
+     ), n as (
+       insert into notes (id, client_id, author_id, body, kind, firm_id)
+       select $8, $4, mine.created_by, $9, 'filing', $2 from mine, d
+     ), a as (
+       insert into audit_log (firm_id, staff_id, tool, input, outcome, detail, duration_ms)
+       select $2, mine.created_by, 'job:filed', $10::jsonb, 'ok', $11, 0 from mine, d
+     )
+     update jobs set step = 'filed', status = 'queued', attempts = 0, last_error = null, run_at = now(),
+            locked_by = null, locked_at = null, updated_at = now()
+     from d where jobs.id = $1 and jobs.firm_id = $2 returning jobs.id`,
+    [
+      job.id,
+      firmOf(db),
+      job.lock,
+      input.clientId,
+      input.taxYear,
+      input.docType,
+      input.title,
+      `nt_${randomBytes(5).toString('hex')}`,
+      input.note,
+      auditInput(job),
+      input.detail,
+    ],
+  );
+  return rows.length === 1;
+}
+
+/** Sends the job's document to review and finishes the job, with its audit row, in one statement (see above). */
+export async function completeReview(db: Db, job: Job, reason: string): Promise<boolean> {
+  const rows = await db.query(
+    `with mine as (
+       select id, document_id, created_by from jobs
+       where id = $1 and firm_id = $2 and locked_by = $3 and status = 'running' for update
+     ), d as (
+       update documents set status = 'review', review_reason = $4, sent_to_review_by = mine.created_by,
+              sent_to_review_at = now()
+       from mine where documents.id = mine.document_id and documents.firm_id = $2 and documents.status = 'processing'
+       returning documents.id
+     ), a as (
+       insert into audit_log (firm_id, staff_id, tool, input, outcome, detail, duration_ms)
+       select $2, mine.created_by, 'job:review', $5::jsonb, 'ok', $4, 0 from mine, d
+     )
+     update jobs set step = 'review', status = 'done', attempts = 0, last_error = null, locked_by = null,
+            locked_at = null, updated_at = now(), finished_at = now()
+     from d where jobs.id = $1 and jobs.firm_id = $2 returning jobs.id`,
+    [job.id, firmOf(db), job.lock, reason, auditInput(job)],
+  );
   return rows.length === 1;
 }
 
@@ -156,30 +255,64 @@ export function backoffMs(attempts: number, baseMs: number): number {
   return Math.min(baseMs * 2 ** Math.max(0, attempts - 1), 600_000);
 }
 
-/** A step failed: retry later, or dead-letter the job when it has used all its attempts. */
+/**
+ * A step failed: retry later, or dead-letter the job when it has used all its attempts. Dead-lettering hands the
+ * document back to the inbox (people take over) in the same statement, along with the audit row.
+ */
 export async function fail(
   db: Db,
   job: Job,
-  worker: string,
   error: string,
   config: Pick<JobsConfig, 'backoffMs'>,
+  options: { denied?: boolean } = {},
 ): Promise<'retry' | 'dead' | 'lost'> {
   const dead = job.attempts >= job.maxAttempts;
   const rows = await db.query(
-    `update jobs set status = $3, last_error = $4, run_at = now() + make_interval(secs => $5), locked_by = null,
-            locked_at = null, updated_at = now()
-     where id = $1 and locked_by = $2 and status = 'running' returning id`,
-    [job.id, worker, dead ? 'dead' : 'queued', error.slice(0, 500), backoffMs(job.attempts, config.backoffMs) / 1000],
+    `with j as (
+       update jobs set status = $3, last_error = $4, run_at = now() + make_interval(secs => $5), locked_by = null,
+              locked_at = null, updated_at = now()
+       where id = $1 and locked_by = $2 and status = 'running' returning id, firm_id, document_id, created_by, status
+     ), d as (
+       update documents set status = 'inbox' from j
+       where j.status = 'dead' and documents.id = j.document_id and documents.firm_id = j.firm_id
+         and documents.status = 'processing'
+     ), a as (
+       insert into audit_log (firm_id, staff_id, tool, input, outcome, detail, duration_ms)
+       select firm_id, created_by, $6, $7::jsonb, $8, $4, 0 from j
+     )
+     select id from j`,
+    [
+      job.id,
+      job.lock,
+      dead ? 'dead' : 'queued',
+      error.slice(0, 500),
+      backoffMs(job.attempts, config.backoffMs) / 1000,
+      dead ? 'job:dead_letter' : 'job:retry',
+      auditInput(job),
+      options.denied ? 'denied' : 'error',
+    ],
   );
   if (rows.length === 0) return 'lost';
   return dead ? 'dead' : 'retry';
 }
 
-/** Dead-letter retry: the job starts again from its last completed step with fresh attempts. */
+/**
+ * Dead-letter retry: the job starts again from its last completed step with fresh attempts, and takes its document
+ * back from the inbox in the same statement. Null when someone has handled the document meanwhile.
+ */
 export async function retryDead(db: Db, id: number): Promise<Job | null> {
   const [row] = await db.query<Row>(
-    `update jobs set status = 'queued', attempts = 0, run_at = now(), last_error = null, updated_at = now()
-     where id = $1 and firm_id = $2 and status = 'dead' returning ${COLUMNS}`,
+    `with dead as (
+       select id, document_id, step from jobs where id = $1 and firm_id = $2 and status = 'dead' for update
+     ), d as (
+       update documents set status = case when documents.status = 'filed' then 'filed' else 'processing' end
+       from dead where documents.id = dead.document_id and documents.firm_id = $2
+         and (documents.status = 'inbox' or (dead.step = 'filed' and documents.status = 'filed'))
+       returning documents.id
+     )
+     update jobs set status = 'queued', attempts = 0, run_at = now(), last_error = null, updated_at = now()
+     where id in (select dead.id from dead join d on d.id = dead.document_id) and firm_id = $2
+     returning ${COLUMNS}`,
     [id, firmOf(db)],
   );
   return row ? toJob(row) : null;

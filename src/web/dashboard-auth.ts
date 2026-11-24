@@ -101,10 +101,13 @@ export function mountDashboardAuth(app: Express, deps: { db: Db; config: Config;
   });
 
   // "Try the demo": a short read-only session as the demo visitor. Rate-limited per IP; every sign-in is audited.
-  const demoLimiter = rateLimit([
-    { max: 5, windowMs: 60_000 },
-    { max: 30, windowMs: 3_600_000 },
-  ]);
+  const demoLimiter = rateLimit(
+    [
+      { max: 5, windowMs: 60_000 },
+      { max: 30, windowMs: 3_600_000 },
+    ],
+    { message: 'Too many demo sign-ins from this address. Try again in a few minutes.' },
+  );
   app.post('/auth/demo', (req: Request, res: Response, next) => {
     if (!config.demoLogin) return res.status(404).json({ error: 'Demo sign-in is not enabled.' });
     if (req.header(CSRF_HEADER) !== '1') return res.status(403).json({ error: 'Missing CSRF header' });

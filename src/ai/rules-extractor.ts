@@ -17,7 +17,8 @@ import {
  */
 
 type Pattern = RegExp;
-const L = (labels: string) => new RegExp(`^\\s*(?:${labels})\\s*[:#]\\s*(.+?)\\s*$`, 'im');
+// Spaces within a line and at most one line break before the value: `\\s*` would scan long blank runs quadratically.
+const L = (labels: string) => new RegExp(`^[ \\t]*(?:${labels})[ \\t]*[:#][ \\t]*(?:\\n[ \\t]*)?(\\S[^\\n]*)$`, 'im');
 
 const PATTERNS: Record<DocType, Record<string, Pattern[]>> = {
   invoice: {
@@ -108,7 +109,13 @@ export function rulesExtractor(): Extractor {
 }
 
 async function extractWithRules(input: ExtractionInput): Promise<Extraction> {
-  const text = input.pages.join('\n');
+  // One space between words, no blank lines, no endless lines: the patterns below then can't be made slow by a hostile file.
+  const text = input.pages
+    .join('\n')
+    .split('\n')
+    .map((line) => line.slice(0, 500).replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+    .join('\n');
   if (!input.textLayer || text.trim().length < 20) {
     return {
       docType: 'other',

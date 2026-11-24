@@ -82,6 +82,7 @@ export function groqExtractor(options: GroqExtractorOptions): Extractor {
         method: 'POST',
         headers: { authorization: `Bearer ${options.apiKey}`, 'content-type': 'application/json' },
         body: JSON.stringify(body),
+        signal: AbortSignal.timeout(60_000),
       });
       const retryable = response.status === 429 || response.status >= 500;
       if (retryable && attempt < MAX_ATTEMPTS) {

@@ -80,6 +80,7 @@ export function voyageEmbedder(apiKey: string, model = VOYAGE_MODEL, doFetch: ty
       method: 'POST',
       headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
       body: JSON.stringify({ input: batch, model, input_type: kind, output_dimension: EMBEDDING_DIMS }),
+      signal: AbortSignal.timeout(60_000),
     });
     if (!res.ok) throw new Error(`Voyage embeddings failed (${res.status})`);
     const body = (await res.json()) as {

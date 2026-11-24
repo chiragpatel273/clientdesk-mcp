@@ -58,6 +58,7 @@ describe('upgrading a v1 database', () => {
       '005_jobs.sql',
       '006_llm_calls.sql',
       '007_firms.sql',
+      '008_hardening.sql',
     ]);
     for (const table of ['staff', 'clients', 'client_assignments', 'documents', 'document_chunks', 'audit_log']) {
       const rows = await db.query<{ firm_id: string }>(`select distinct firm_id from ${table}`);

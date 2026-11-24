@@ -14,7 +14,6 @@ import { renderTextPdf } from '../src/documents/pdf-render.js';
 import { ingestDocument } from '../src/domain/documents.js';
 import { usageSummary } from '../src/domain/usage.js';
 import { createHttpApp } from '../src/http.js';
-import { enqueue } from '../src/jobs/queue.js';
 import { createWorker } from '../src/jobs/worker.js';
 import { call, connectAs, demoDb, demoDbWithDocuments, lastAudit, testServices, TOM, nb } from './helpers.js';
 
@@ -204,19 +203,18 @@ describe('who and what a call is recorded against', () => {
   it('a batch job: the uploader, source job, the document and the job', async () => {
     const services = testServices();
     const db = await demoDb();
-    const { id } = await ingestDocument(nb(db), services, {
+    const { id, jobId } = await ingestDocument(nb(db), services, {
       bytes: await renderTextPdf('x', ['INVOICE\nInvoice number: Q-1\nBill to: Acme Ltd\nTotal due: $9.00']),
       mimeType: 'application/pdf',
       filename: 'x.pdf',
       uploadedBy: 'st_maya',
-      deferProcessing: true,
+      intakeJob: { createdBy: 'st_maya', batchId: null, idempotencyKey: null, maxAttempts: 3 },
     });
-    const { job } = await enqueue(nb(db), { documentId: id, createdBy: 'st_maya' }, { maxAttempts: 3 });
     await createWorker({ db, services, config: loadConfig({ NODE_ENV: 'test' }).jobs }).runUntilIdle();
     const rows = await llmRows(db);
     expect(rows.length).toBeGreaterThanOrEqual(2); // index + extract (+ re-index when filed)
     expect(
-      rows.every((r) => r.source === 'job' && r.staff_id === 'st_maya' && r.document_id === id && r.job_id === job.id),
+      rows.every((r) => r.source === 'job' && r.staff_id === 'st_maya' && r.document_id === id && r.job_id === jobId),
     ).toBe(true);
     expect(rows.map((r) => r.operation)).toContain('extract');
 

@@ -90,6 +90,11 @@ export async function createDb(url: string): Promise<Db> {
 
   if (url.startsWith('postgres://') || url.startsWith('postgresql://')) {
     const pool = new pg.Pool({ connectionString: url, max: 10 });
+    // Neon closes idle connections (suspend, failover). Without a listener that would crash the process; the pool
+    // simply opens a new connection for the next query.
+    pool.on('error', (error) =>
+      console.error('Database connection lost:', (error as { code?: string }).code ?? 'idle'),
+    );
     const run: Scoped = async (firmId, sql, params) => {
       const conn = await pool.connect();
       let broken = false;

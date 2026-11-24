@@ -13,10 +13,11 @@ export async function canAccessClient(db: Db, actor: Actor, clientId: string): P
   const rows =
     actor.role === 'partner'
       ? await db.query('select 1 from clients where id = $1 and firm_id = $2', [clientId, firmId])
-      : await db.query(
-          'select 1 from client_assignments where client_id = $1 and staff_id = $2 and firm_id = $3',
-          [clientId, actor.staffId, firmId],
-        );
+      : await db.query('select 1 from client_assignments where client_id = $1 and staff_id = $2 and firm_id = $3', [
+          clientId,
+          actor.staffId,
+          firmId,
+        ]);
   return rows.length > 0;
 }
 
@@ -62,14 +63,15 @@ export async function partitionByAccess(
 }
 
 /**
- * Does this id exist in another firm? Answers only yes or no (through a `security definer` function that reveals
- * nothing else), so a lookup can say "not found" to the caller and still be audited as a cross-firm attempt.
+ * Records, for the owner of the deployment only, an attempt to use an id of another firm. Deliberately returns nothing: the
+ * app can't tell another firm's id from one that doesn't exist.
  */
-export async function belongsToAnotherFirm(
+export async function noteCrossFirm(
   db: Db,
-  kind: 'client' | 'document' | 'staff' | 'job',
+  actor: Pick<Actor, 'staffId'>,
+  tool: string,
+  kind: 'client' | 'document' | 'job' | 'batch' | 'open_item',
   id: string,
-): Promise<boolean> {
-  const [row] = await db.query<{ firm: string | null }>('select clientdesk_owner_firm($1, $2) as firm', [kind, id]);
-  return row?.firm !== null && row?.firm !== undefined && row.firm !== firmOf(db);
+): Promise<void> {
+  await db.query('select clientdesk_note_cross_firm($1, $2, $3, $4)', [kind, id.slice(0, 100), actor.staffId, tool]);
 }

@@ -1,20 +1,20 @@
 # ClientDesk v2 report
 
-Built on branch `v2` (from `main` at `6bf57a9`), 2026-11-19, in one run. Nothing was pushed or deployed, no paid or
-keyed API was called (every run used the offline extractor and embeddings), and no existing history was rewritten.
-101 files changed, about 7,100 lines added.
+Built on branch `v2` (from `main` at `6bf57a9`) on 2026-11-19; corrected and hardened on 2026-11-24 (see
+"Corrections" and "Security review"). Nothing has been pushed or deployed, no paid or keyed API was called (every run used
+the offline extractor and embeddings), and no existing history was rewritten.
 
 ## What was built
 
-| #   | Phase                        | Commit    | In one line                                                                                                         |
-| --- | ---------------------------- | --------- | ------------------------------------------------------------------------------------------------------------------- |
-| 1   | Try the demo                 | `4421e64` | A "Try the demo" button: read-only, partner-level session, enforced on the server, audited, rate-limited            |
-| 2   | Search and the citation miss | `6316918` | Three general ranking changes; offline citation accuracy 93.3% → 100%; Voyage documented as the production embedder |
-| 3   | Batch intake + job queue     | `236b4a4` | Postgres job queue (`SKIP LOCKED`), retries, dead-letter, idempotency, stuck reclaim; per-document progress UI      |
-| 5   | Playwright E2E               | `5e76a74` | Chromium tests against the real server, in CI with traces on failure                                                |
-| 6   | LLM usage and cost           | `291d1d7` | Every model call recorded (tokens, cost, latency, escalations, errors); a Usage page                                |
-| 4   | Multiple firms               | `940f46d` | `firm_id` everywhere, isolation in the domain layer and by Postgres RLS, a second firm, 21 cross-firm tests         |
-|     | Docs, upgrade test, Docker   | final     | README, case study, demo script, this report; a v1 → v2 database upgrade test; baseline report in the image         |
+| #   | Phase                        | Commit    | In one line                                                                                                                       |
+| --- | ---------------------------- | --------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Try the demo                 | `4421e64` | A "Try the demo" button: read-only, partner-level session, enforced on the server, audited, rate-limited                          |
+| 2   | Search and the citation miss | `6316918` | Three ranking changes; offline citation accuracy 96.7% → 100% on the same questions; Voyage documented as the production embedder |
+| 3   | Batch intake + job queue     | `236b4a4` | Postgres job queue (`SKIP LOCKED`), retries, dead-letter, idempotency, stuck reclaim; per-document progress UI                    |
+| 5   | Playwright E2E               | `5e76a74` | Chromium tests against the real server, in CI with traces on failure                                                              |
+| 6   | LLM usage and cost           | `291d1d7` | Every model call recorded (tokens, cost, latency, escalations, errors); a Usage page                                              |
+| 4   | Multiple firms               | `940f46d` | `firm_id` everywhere, isolation in the domain layer and by Postgres RLS, a second firm, 21 cross-firm tests                       |
+|     | Docs, upgrade test, Docker   | final     | README, case study, demo script, this report; a v1 → v2 database upgrade test; baseline report in the image                       |
 
 ### Phase 1: Try the demo
 
@@ -31,13 +31,15 @@ keyed API was called (every run used the offline extractor and embeddings), and 
 ### Phase 2: Better search and the citation miss
 
 - Diagnosis: q_18 cited page 1 of a two-page statement whose closing balance is on page 2 (every identifying word is
-  on page 1). q_27 had two right answers (one bank sent Hana Kim a 1098 and a 1099-DIV for 2025; the paraphrase didn't
-  name the form). A dataset bug, fixed and reported as such, along with two more of the same kind.
+  on page 1): a real ranking miss, in both the Groq and offline runs. q_27 (a miss only in the Groq run) had two right
+  answers: one bank sent Hana Kim a 1098 and a 1099-DIV for 2025, and the question didn't name the form. One more asked
+  question (q_24) had the same problem. The fix reworded all six asked questions of those two kinds.
 - General fixes: passages repeat their document's key identifiers and name the extracted fields they hold by
   description ("balance at the end of the period"); within a document the cited page is chosen by the question words
   its passages don't all share; query-term coverage is a fourth ranked list in the fusion.
-- Guard against overfitting: a 72-question robustness set (both question variants for every searchable document) is
-  in every report. Its one remaining miss is published.
+- A wider check: 72 questions (both phrasings for every searchable document) in every report. It includes the 30 asked
+  ones, and its misses were looked at while tuning, so it shows breadth but is not an independent test. The passage
+  wording was also adjusted while looking at q_18.
 - Migration `004` (`passage_version`): start-up rebuilds passages from an older format or another embedder, so this
   deploy and a later switch to Voyage need no manual step (`npm run reindex` exists).
 - Offline runs now write `eval/baseline.*`; model runs keep `eval/report.*`, so the free run never overwrites the
@@ -59,11 +61,13 @@ keyed API was called (every run used the offline extractor and embeddings), and 
 
 ### Phase 5: Playwright end-to-end tests
 
-9 tests, Chromium, about 60 s locally including the dashboard build and server start (budget: 3 minutes): partner
+14 tests, Chromium, about 60 s locally including the dashboard build and server start (budget: 3 minutes): partner
 sees all pages; assistant refused an unassigned client (a real MCP call) and the refusal is in the audit log;
 assistant sees only their own audit rows without details; partner resolves a review item; demo visitor reads
 everything and an upload is refused and audited; batch upload shows progress; the Usage page shows the batch and the
-eval run; a second firm's partner sees only their firm. The suite found one real bug: the audit log page showed a
+eval run; a second firm's partner sees only their firm. Added on 2026-11-24: duplicate and refused files in a batch, and, against a
+server with real sign-in switched on and a stand-in provider, the actual sign-in page: Try the demo, staff sign-in and
+sign-out, and the dev header doing nothing. The suite found one real bug: the audit log page showed a
 15-second-old list, so a refusal you had just caused wasn't there (fixed).
 
 ### Phase 6: LLM usage and cost
@@ -88,7 +92,9 @@ eval run; a second firm's partner sees only their firm. The suite found one real
   throws on an unscoped handle (fails closed). Layer 2: each scoped query runs in its own transaction as
   `clientdesk_app` with `app.firm_id` set, so RLS applies even to raw SQL. The owner connection is only for identity
   lookup, the job queue's claim/advance, migrations and start-up.
-- Another firm's id answers exactly like "not found" (no way to probe) and is audited as `denied`.
+- Every unknown id is answered as "not found" and audited as `denied`, "unknown id", whether it belongs to another firm or
+  to nobody, so neither the answer nor the firm's own log can be used to probe. Real cross-firm attempts are recorded in
+  `security_events`, which only the database owner can read (migration 008 replaced `clientdesk_owner_firm()`).
 - Second fictional firm: Harbourline Tax Partners (Lena Ortiz, partner; Sam Okafor, assistant) with its own
   "Acme Ltd", a filed invoice and an inbox invoice billed to "Acme Ltd".
 - Tests: RLS alone (raw SQL, cross-firm insert/update/delete, insert outside a firm), the domain layer alone, the
@@ -98,23 +104,24 @@ eval run; a second firm's partner sees only their firm. The suite found one real
 
 ## Accuracy, before and after
 
-| Metric                   | Groq run (published, 2026-11-09, before v2) | Offline before v2 | Offline after v2 | Target |
-| ------------------------ | ------------------------------------------- | ----------------- | ---------------- | ------ |
-| Field accuracy           | 98.1%                                       | 84.0%             | 84.0%            | ≥ 95%  |
-| Wrong-client filings     | 0                                           | 0                 | 0                | 0      |
-| Review-queue rate        | 10.0%                                       | 25.0%             | 25.0%            | ≤ 10%  |
-| Search hit rate (top 5)  | 100%                                        | 100%              | 100%             | ≥ 90%  |
-| Citation accuracy        | 93.3% (miss)                                | 93.3% ¹           | **100%**         | ≥ 95%  |
-| Robustness set, citation | not measured                                | 93.1% ¹           | **98.6%**        | none   |
+| Metric                  | Groq run (published, 2026-11-09, before v2) | Offline before v2 | Offline after v2 | Target |
+| ----------------------- | ------------------------------------------- | ----------------- | ---------------- | ------ |
+| Field accuracy          | 98.1%                                       | 84.0%             | 84.0%            | ≥ 95%  |
+| Wrong-client filings    | 0                                           | 0                 | 0                | 0      |
+| Review-queue rate       | 10.0%                                       | 25.0%             | 25.0%            | ≤ 10%  |
+| Search hit rate (top 5) | 100%                                        | 100%              | 100%             | ≥ 90%  |
+| Citation accuracy ¹     | 93.3% (miss)                                | 96.7%             | **100%**         | ≥ 95%  |
+| Wider check, citation ¹ | not measured                                | 91.7%             | **95.8%**        | none   |
 
-¹ On the corrected question set. On the original questions the offline run scored 96.7% (q_27's two right answers
-happened to land the right way). Ablation (corrected questions, 30 / 72): context lines alone 93.3% / 91.7%; page
-choice + coverage on the old context 96.7% / 97.2%; context + page choice 100% / 97.2%; all three 100% / 98.6%. No
-asked question got worse; one robustness question flipped to a near-tie (eng_03 paraphrased, 0.0487 vs 0.0484:
-"pay for the work" meaning "fee" needs semantic embeddings). Extraction is unchanged in v2, so field accuracy and
-review rate only move with a model run. The Groq column needs a rerun to show v2's search changes.
+¹ Original questions, re-measured on 2026-11-24 with the v1 and v2 code: 29 of 30, then 30 of 30. The offline run already
+met the target; v2 fixed one question. On the reworded questions v1 scores 93.3% / 93.1% (the rewording made q_21 harder
+for it) and v2 100% / 98.6%, which is what `eval/baseline.md` now shows. Ablation, reworded questions (30 / 72): context
+lines alone 93.3% / 91.7%; page choice + coverage on the old context 96.7% / 97.2%; context + page choice 100% / 97.2%;
+all three 100% / 98.6%. No asked question got worse; one wider question did (eng_03 paraphrased, a near-tie: 0.0487 vs
+0.0484). Extraction is unchanged in v2, so field accuracy and review rate only move with a model run. The Groq column
+needs a rerun to show v2's search changes.
 
-Tests: 104 before v2; now 174 vitest tests and 9 Playwright tests.
+Tests: 104 before v2; now 202 vitest tests and 14 Playwright tests.
 
 ## Decisions made on your behalf
 
@@ -126,8 +133,9 @@ second look:
 3. `render.yaml` turns `DEMO_LOGIN` on (code default off), with `TRUST_PROXY=1`.
 4. Demo sessions last 2 hours and stop working the moment `DEMO_LOGIN` is turned off.
 5. The demo rate limit is in memory (one instance on Render free).
-6. Three ambiguous eval questions were corrected, reported as a dataset fix with the old ranking's score on the new
-   set, so the system gain isn't inflated.
+6. Six eval questions were reworded because two of them had two right answers, reported as a dataset fix. The first
+   version of this report compared against the reworded score (93.3%) and said the gain wasn't inflated; it was. The
+   like-for-like gain is 96.7% → 100%.
 7. The Groq run was not replayed or estimated: it needs a real rerun.
 8. The offline eval writes `eval/baseline.*` so it never overwrites the published model report.
 9. Start-up rebuilds stale passages automatically (you can't reach Neon's port 5432 from your network).
@@ -141,7 +149,7 @@ second look:
 16. Usage recording uses AsyncLocalStorage; errors are stored as a category only.
 17. Groq and Voyage prices are third-party-checked estimates (the price file says so).
 18. RLS uses a transaction per query, not per request (no transactions held across model calls).
-19. Another firm's id answers "not found", audited as `denied`.
+19. Every unknown id answers "not found" and is audited the same way; cross-firm attempts go to an owner-only table.
 20. The second firm is seeded wherever the demo is, including production; its staff have no WorkOS logins.
 21. Dev mode's user picker lists every firm's staff.
 
@@ -149,24 +157,68 @@ second look:
 
 Nothing in the spec was skipped. Not verifiable from here:
 
-- **Migration 007 on Neon.** It creates role `clientdesk_app` and grants it to the connecting user. Postgres 16+
-  allows this for a role with `CREATEROLE` (Neon's owner role has it), and it works on PGlite, but it hasn't run on
-  Neon. If it fails, start-up stops at the migration with the error in Render's logs, nothing is half-applied (each
-  migration runs in one transaction), and `main` keeps working on the old schema.
+- **Migrations 007 and 008 on Neon.** 007 creates role `clientdesk_app` and grants it to the connecting user. They run on
+  PGlite, and the reviewer ran 007 on a local Postgres 18 as a non-superuser owner with `CREATEROLE`. 008 has run only on
+  PGlite, and neither has run on Neon; whether Neon's owner role may create roles is not confirmed here. Each migration is
+  one transaction, so a failing one changes nothing, but the ones before it stay applied.
+- **Going back.** After 007, v1's code can't write (its inserts don't name a firm), so rolling back the code means restoring
+  the database too (Neon point-in-time restore). During the deploy itself, the old instance may log errors for the moment
+  both run.
+- **The fix for dropped idle database connections** (`pool.on('error')`) is in, but only checked by reading.
 - **Real-model numbers** for v2's search changes (Groq, Claude, Voyage): not run, by the no-keys rule.
 - **Live demo:** the README and case study describe the deployed v2 (Try the demo, Usage page). Merge and deploy
   together so the live site matches.
 
+## Corrections (2026-11-24)
+
+The first version of this report got these wrong:
+
+- The search gain was overstated (see "Accuracy"): like for like it is 96.7% → 100%, one question.
+- "Three ambiguous questions" were two; six were reworded. Only one of the two original misses was a faulty question.
+- The 72-question check was presented as a guard against overfitting. It was looked at while tuning.
+- It said each phase had a security review. Only phase 1 had one; the rest got an informal pass and phase 5 none.
+- It said every job step was safe to repeat. Filing, dead-lettering, retrying and storing were not.
+- The "Try the demo" button on the real sign-in page had never been clicked by a test.
+- The local run command would have picked up keys and S3 settings from `.env`.
+
+## Security review (2026-11-24)
+
+An independent reviewer (a second agent, given the code and not the conclusions) reviewed all phases and proved most findings
+by running them. Fixed, each with a test unless noted:
+
+| Finding                                                                                                        | Fix                                                                                                |
+| -------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| A demo visitor opening a document mid-batch spoiled its extraction                                             | Nobody can open, extract or match a document being processed; late results are discarded           |
+| Demo visitors could cause unlimited model calls by opening a file                                              | Viewing never extracts for partners or the demo; one extraction at a time per document             |
+| After a job died before reading the text, an assistant could read another team's document                      | Unread text is read before any access decision; until then only partners see it                    |
+| One 100 KB line of digits froze the server for 22 s                                                            | Linear patterns, cut lines, limits on pages and text                                               |
+| A crash or failing embedding service left filed documents with no note, no audit row or a dead job             | Document, note, audit row and job state in one statement; passages rebuilt separately and repaired |
+| Two loops of one worker could both record the same job                                                         | Locks per claim, heartbeat, request timeouts                                                       |
+| Documents stuck in `processing` (storing, dead-lettering, retrying); batch limit and keys raced                | One statement each; batch places taken atomically                                                  |
+| A crash while re-indexing left a document with no passages                                                     | Passages replaced in place in one statement; stale ones found on start-up                          |
+| A firm's own audit log showed whether an id exists in another firm                                             | Every unknown id logged the same; owner-only `security_events`                                     |
+| The demo could fill the audit log                                                                              | Rate limits on reads and writes; IPv6 counted per network                                          |
+| Other firms' batch and open-item ids weren't audited                                                           | Audited as unknown ids                                                                             |
+| The server crashed when Postgres dropped an idle connection                                                    | Error listener (no test)                                                                           |
+| References to other firms' rows in a few columns; new tables open by default; shared idempotency keys          | Same-firm foreign keys, default grants removed, keys per firm (migration 008)                      |
+| Typing a fragment listed other teams' clients; wildcards; a duplicate upload showed a hidden title             | Names only when typed exactly; literal matching; title withheld                                    |
+| Raw provider errors shown to partners and the demo; odd numbers gave 500; 15 MB buffered before the role check | Error categories only; numbers and ids checked; role check first                                   |
+| The worker polled every second, keeping Neon awake                                                             | It sleeps until something is due and is woken by uploads                                           |
+
+Not changed: `/api/accuracy` shows the (synthetic, public) eval report to any signed-in user; injected SQL could leave the app
+role (there is none: all SQL is parameterised); usage counts a model's refusal as a success; Render's proxy hop count for
+`TRUST_PROXY=1` is unconfirmed.
+
 ## Your steps
 
-1. **Review and merge.** `git log main..v2` is the six phase commits plus the docs commit. Push the branch and open a
+1. **Review and merge.** `git log main..v2` is the six phase commits, the docs commit and the corrections. Push the branch and open a
    PR as usual; CI now has four jobs: check, eval (offline), e2e (Playwright) and the manual Claude eval.
 2. **Render settings** (Environment):
    - `DEMO_LOGIN=true` and `TRUST_PROXY=1` (both in `render.yaml`; add them by hand if the service isn't synced from
      the blueprint).
    - Nothing else is required. Optional: `WORKER_CONCURRENCY` (default 2), `JOB_MAX_ATTEMPTS` (5),
      `JOB_BACKOFF_MS` (2000), `JOB_STUCK_SECONDS` (300). `WORKER=1` is the default.
-3. **What happens on deploy** (automatic, in Render's logs): migrations `003_demo_visitor` through `007_firms` apply
+3. **What happens on deploy** (automatic, in Render's logs): migrations `003_demo_visitor` through `008_hardening` apply
    in order; existing rows are backfilled to Northbridge; "Added the read-only demo visitor."; "Seeded the Harbourline
    Tax Partners demo firm." and "Loaded 2 Harbourline Tax Partners demo documents."; "Rebuilt search passages for
    N firm_northbridge documents". Before deploying, Neon's point-in-time restore (or a branch) is your rollback.
@@ -187,19 +239,22 @@ Nothing in the spec was skipped. Not verifiable from here:
 
 ```bash
 npm install && npm run dashboard:install && npm run dashboard:build
-DEMO_LOGIN=true npm run dev            # http://localhost:3000/dashboard/
+# Every setting is spelled out so nothing is taken from .env (real keys, S3, sign-in). The database is in memory.
+PORT=3320 NODE_ENV=development DATABASE_URL=pglite://memory AUTH_MODE=dev PUBLIC_URL= ALLOWED_HOSTS= \
+DEMO_LOGIN=true EXTRACTOR=rules EMBEDDINGS=local STORAGE=local FILES_DIR=.data/try-files \
+ANTHROPIC_API_KEY= GROQ_API_KEY= VOYAGE_API_KEY= npx tsx src/main.ts     # http://localhost:3320/dashboard/
 ```
 
 - **Try the demo:** user picker (top right) → "Try the demo (read-only)"; the banner appears; try an upload or a
   review filing and find the refusal in the audit log; "Exit demo" returns.
-- **Search:** `npm run eval -- --extractor=rules` → `eval/baseline.md` (citation 100%, robustness section). Accuracy
+- **Search:** `npm run eval -- --extractor=rules` → `eval/baseline.md` (citation 100%, wider check). Accuracy
   page → "Offline baseline (CI)".
 - **Batch intake:** as Maya → Inbox → "Choose files for a batch" → pick several PDFs or .txt files; watch each step;
   the failed-jobs card appears if any job dead-letters. `npm run worker` runs the worker on its own (`WORKER=0`).
 - **Usage:** after a batch, the Usage page (partners only) shows calls per day, per model and per source.
 - **Multiple firms:** user picker → "Lena Ortiz · Partner · Harbourline Tax Partners": the header, inbox, audit log and
   usage all switch to Harbourline; Northbridge's documents are invisible, even by id.
-- **Tests:** `npm run check` (174 tests), `npx playwright test` (9 tests, about a minute).
+- **Tests:** `npm run check` (202 tests), `npx playwright test` (14 tests, about a minute).
 
 ## Resume bullets (v2, real numbers)
 
@@ -212,9 +267,11 @@ the branch is pushed.
 - Built batch document intake on a Postgres job queue (`FOR UPDATE SKIP LOCKED`) with retries, exponential backoff,
   dead-lettering, idempotency keys and stuck-job recovery, plus per-model LLM cost tracking (tokens, cost, latency,
   escalations) behind a usage dashboard.
-- Raised RAG citation accuracy from 93.3% to 100% with general ranking fixes validated against a 72-question
-  robustness set (93.1% → 98.6%); grew the suite from 104 to 174 tests plus 9 Playwright end-to-end tests with a CI
-  job, and built a server-enforced, rate-limited read-only demo mode.
+- Hardened it through an independent security review: closed a public-visitor path that could disturb background jobs and
+  trigger paid model calls, made job state transitions atomic, and removed a denial-of-service in text processing; grew
+  the suite from 104 to 202 tests plus 14 Playwright end-to-end tests.
+- Improved RAG citation ranking (offline eval: 29 → 30 of 30 questions cited to the right page) and published the method,
+  the misses and an ablation of each change.
 
 ## What to re-record in the demo video
 
@@ -225,6 +282,6 @@ The current video (1:56) still holds for Claude. Add, or replace the dashboard p
 2. Maya → Inbox → **Batch intake** with 5–10 demo files: the per-document progress, mostly "Filed to …", one look-alike
    "Sent to review" (about 20 s).
 3. **Usage** page right after the batch: calls, tokens, cost per filed document (about 10 s).
-4. Accuracy page: citation 100% offline and the robustness check (about 10 s), once the Groq rerun is published.
+4. Accuracy page: citation 100% offline and the wider check (about 10 s), once the Groq rerun is published.
 5. Optional, recorded locally in dev mode: switch to Lena (Harbourline): same "Acme Ltd" name, different firm, none of
    Northbridge's documents (about 10 s).

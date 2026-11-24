@@ -105,6 +105,16 @@ describe('Try the demo (read-only demo session)', () => {
     expect(upload.status).toBe(403);
     expect(await lastAudit(db)).toMatchObject({ tool: 'dashboard:upload', outcome: 'denied' });
 
+    // Without the CSRF header too: still refused, and still in the audit log.
+    const noCsrf = await api('/api/batches', cookie, { method: 'POST' });
+    expect(noCsrf.status).toBe(403);
+    expect(await lastAudit(db)).toMatchObject({
+      staff_id: 'st_demo',
+      tool: 'dashboard:create_batch',
+      outcome: 'denied',
+      detail: 'read-only session',
+    });
+
     // Any other write route, including ones added later, is refused the same way.
     const other = await api('/api/anything', cookie, { method: 'POST', headers: { 'x-clientdesk-csrf': '1' } });
     expect(other.status).toBe(403);
@@ -216,7 +226,7 @@ describe('demo visitor on an existing database', () => {
 describe('rateLimit', () => {
   it('allows max requests per window, then answers 429 with Retry-After until the window ends', () => {
     let t = 0;
-    const limiter = rateLimit([{ max: 2, windowMs: 1000 }], () => t);
+    const limiter = rateLimit([{ max: 2, windowMs: 1000 }], { now: () => t });
     const run = () => {
       let status = 200;
       const headers: Record<string, string> = {};

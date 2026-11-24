@@ -130,7 +130,8 @@ Build order: 1 → 2 → 3 → 5 → 6 → 4. Every phase must pass `npm run che
 - Fixes, all general: (1) passage context repeats key identifiers and names the extracted fields a passage holds by
   description; (2) within a document, the page is chosen by question words its passages don't all share; (3)
   query-term coverage as a fourth RRF list. Dataset: paraphrases name the invoice number / kind of amount.
-- Anti-overfitting: a 72-question robustness set (both variants for every searchable document) in every report.
+- Wider check: 72 questions (both variants for every searchable document) in every report. Not independent: it
+  includes the 30 and was looked at while tuning.
 - Schema: migration `004_passage_version.sql`; start-up rebuilds passages from an older format or another embedder,
   so the deploy and a later switch to Voyage need no manual step (`npm run reindex` exists for by hand).
 - Offline runs write `eval/baseline.*` (CI artifact); model runs keep `eval/report.*`, so the published Groq report
@@ -148,7 +149,7 @@ Build order: 1 → 2 → 3 → 5 → 6 → 4. Every phase must pass `npm run che
   so several workers (or instances) never take the same job; attempts are counted at claim time, so a job whose
   worker died (`locked_at` older than the stuck timeout) is reclaimed and still runs out of attempts. Failure:
   exponential backoff (`run_at`), then `dead` after `max_attempts` (dead-letter), retryable by a partner.
-- Pipeline (`src/jobs/intake.ts`), one step per claim, each step idempotent and audited as `job:<step>` for the
+- Pipeline (`src/jobs/intake.ts`), one step per claim, each step audited as `job:<step>` (filing and review: one statement with the job's state, since 2026-11-24) for the
   uploader: stored (at upload) → text_extracted → embedded → fields_extracted → matched → filed | review. Filing uses
   the same `matchClients` rule (0.85, 15 points clear, look-alikes need a second identifier) and re-checks the
   uploader's access to the client at the filing step. A dead job puts the document back in the inbox, so the manual
@@ -164,8 +165,8 @@ Build order: 1 → 2 → 3 → 5 → 6 → 4. Every phase must pass `npm run che
   with SQL for the dashboard and the audit trail; and tests run it in PGlite. Redis wins at thousands of jobs a
   second or with delayed-job fan-out; intake here is tens of documents an hour.
 - Risks: polling (default every second) costs a cheap indexed query per worker; LISTEN/NOTIFY would cut it but
-  doesn't exist in PGlite. A step that succeeds but crashes before recording it runs again: every step is
-  idempotent (rebuild chunks, cached extraction, guarded status updates).
+  doesn't exist in PGlite. A step that succeeds but crashes before recording it runs again: those before the decision only rebuild the same
+  thing; the decision itself is atomic (the first version's wasn't).
 
 **Phase 5: Playwright end-to-end tests.**
 
@@ -236,9 +237,9 @@ Build order: 1 → 2 → 3 → 5 → 6 → 4. Every phase must pass `npm run che
    them at once even though the cookie is still validly signed.
 5. **The demo rate limit is in memory** (5 a minute, 30 an hour per IP). Render's free plan runs one instance;
    with several instances each would count separately, which only loosens the limit. Redis would be the next step.
-6. **Corrected three ambiguous eval questions** rather than leaving them: a question with two right answers
-   measures nothing. Reported as a dataset fix, separately from the system changes, with the old ranking's score on
-   the corrected set (93.3%) so the system gain isn't inflated.
+6. **Reworded six eval questions** because two of them had two right answers: a question with two right answers
+   measures nothing. The rewording lowers v1's score (96.7% → 93.3%), so the like-for-like gain is 96.7% → 100% on the
+   original questions (corrected 2026-11-24; the first write-up compared against 93.3%).
 7. **Did not replay the Groq run.** Its extractions could be reconstructed from the report, but the honest update
    is a real rerun (free tier), listed for the owner. The README labels the Groq column "before v2 search".
 8. **Offline eval output moved to `eval/baseline.*`**, so the spec'd `npm run eval -- --extractor=rules --check`
@@ -265,20 +266,26 @@ Build order: 1 → 2 → 3 → 5 → 6 → 4. Every phase must pass `npm run che
 18. **Per-query transactions for RLS**, not one transaction per request: no long transactions held open across model
     calls (seconds), no aborted-transaction cascades, and PGlite (one connection) stays safe under concurrent
     requests because each scoped query is atomic. Cost: three extra round trips per query on Neon.
-19. **Another firm's id answers "not found"**, not "denied": answering "denied" would confirm the id exists
-    elsewhere. The audit log still records it as `denied` (the spec's "denied and audited"), via a
-    `security definer` function that reveals only which firm owns an id.
+19. **Every unknown id answers "not found" and is audited as `denied`, "unknown id"**, whether it belongs to another firm
+    or to nobody: the first version logged the difference in the firm's own audit log, which is the oracle it meant to
+    avoid. Cross-firm attempts go to `security_events` (owner only), through a function that returns nothing.
 20. **The second firm is seeded everywhere the demo is**, including production, so isolation can be shown live; its
     staff have no WorkOS logins (dev mode only), so on the live site nobody can sign in as them.
 21. **Dev mode's user picker lists every firm's staff**, so a developer can switch firms; it is unavailable in OAuth
     mode.
 
+22. **Security review by a second agent** (2026-11-24), because the author's own passes had missed real problems. All high
+    and medium findings and most low ones fixed in migration 008 and code; list in `docs/V2-REPORT.md`.
+23. **An idle worker sleeps** until a retry is due or an upload wakes it, instead of polling Neon every second; a worker in
+    its own process polls every 2 s.
+24. **Limits on a document** (300 pages, 500,000 characters): larger ones are refused rather than cut short.
+
 ### Blocked / needs owner
 
 Nothing was blocked in the build. These need the owner (details and commands in `docs/V2-REPORT.md`):
 
-- **Neon: migration 007 creates role `clientdesk_app` and grants it to the connecting user.** Verified on PGlite
-  (and an upgrade test from a v1 database with data); not verified on Neon, which this run must not touch.
+- **Neon: migrations 007 and 008** (007 creates role `clientdesk_app`). Run on PGlite, 007 also on a local Postgres 18 as a
+  non-superuser; not on Neon. After 007 the v1 code can't write, so a rollback needs a database restore.
 - **Render:** `DEMO_LOGIN=true` and `TRUST_PROXY=1` (in `render.yaml`; add by hand if the service isn't synced from
   the blueprint).
 - **Measured runs with keys** (none were made): Groq eval (free), Claude eval (about $0.05–0.40), Voyage.
@@ -287,8 +294,8 @@ Nothing was blocked in the build. These need the owner (details and commands in 
 ## Status
 
 - **v2 (2026-11-19, branch `v2`, not merged or deployed):** all six phases built offline and committed one by one:
-  1 Try the demo, 2 search (citation 93.3% → 100% offline), 3 batch intake on a Postgres job queue, 5 Playwright
-  E2E, 6 LLM usage and cost, 4 multiple firms with RLS. 174 vitest tests + 9 Playwright tests, offline eval,
+  1 Try the demo, 2 search (citation 96.7% → 100% offline, same questions), 3 batch intake on a Postgres job queue, 5 Playwright
+  E2E, 6 LLM usage and cost, 4 multiple firms with RLS. 202 vitest tests + 14 Playwright tests, offline eval,
   both builds and the Docker image pass. Report: `docs/V2-REPORT.md`.
 
 - **Day 1 (done):** schema and migrations, PGlite/pg `Db`, demo firm, `get_client` with access check + audit, stateless

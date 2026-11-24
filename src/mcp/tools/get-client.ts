@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { partitionByAccess } from '../../domain/access.js';
 import { findClients, getClientDetail, type ClientDetail } from '../../domain/clients.js';
 import { notFoundAudit } from '../document-access.js';
+import { hiddenClients } from '../resolve-client.js';
 import { runTool, type ToolContext } from '../run-tool.js';
 
 const ClientRefSchema = z.object({ id: z.string(), name: z.string() });
@@ -94,9 +95,8 @@ export function registerGetClient(server: McpServer, ctx: ToolContext): void {
       runTool<Output>(ctx, 'get_client', { client: query }, async () => {
         const matches = await findClients(ctx.db, query);
         if (matches.length === 0) {
-          // Another firm's client id is answered exactly like a missing one, but audited as denied.
           return {
-            ...(await notFoundAudit(ctx, 'client', query)),
+            ...(await notFoundAudit(ctx, 'get_client', 'client', query)),
             text: `No client matches "${query}".`,
             structured: { status: 'not_found', message: `No client matches "${query}".` },
           };
@@ -110,13 +110,7 @@ export function registerGetClient(server: McpServer, ctx: ToolContext): void {
         const visible = matches.filter((m) => allowed.has(m.id));
 
         if (visible.length === 0) {
-          const message = `You are not assigned to ${matches.map((m) => m.name).join(', ')}. Ask a partner for access.`;
-          return {
-            outcome: 'denied',
-            text: message,
-            structured: { status: 'denied', message },
-            detail: `denied client ids: ${[...denied].join(', ')}`,
-          };
+          return hiddenClients(query, matches, denied);
         }
 
         if (visible.length > 1) {

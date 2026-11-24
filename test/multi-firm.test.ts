@@ -10,7 +10,6 @@ import { getDocument, ingestDocument } from '../src/domain/documents.js';
 import { ensureMatch } from '../src/domain/intake.js';
 import { findActorByEmail } from '../src/domain/staff.js';
 import { createHttpApp } from '../src/http.js';
-import { enqueue } from '../src/jobs/queue.js';
 import { createWorker } from '../src/jobs/worker.js';
 import type { AppServices } from '../src/services.js';
 import { call, connectAs, demoDbWithDocuments, HL, LENA, MAYA, NB, testServices, TOM } from './helpers.js';
@@ -132,11 +131,18 @@ describe('two firms in one database', () => {
         staff_id: 'st_maya',
         tool: 'get_client',
         outcome: 'denied',
-        detail: 'client of another firm',
+        detail: 'unknown id',
       });
-      // A client id that exists nowhere is plain not found, not denied.
+      const real = await lastAuditOf(db, NB);
+      // An id that exists nowhere leaves exactly the same trace: the firm's own log can't be used to find out which ids
+      // exist elsewhere. Only the owner of the deployment sees the difference.
       await call(maya, 'get_client', { client: 'cl_nobody' });
-      expect(await lastAuditOf(db, NB)).toMatchObject({ tool: 'get_client', outcome: 'ok' });
+      expect(await lastAuditOf(db, NB)).toEqual(real);
+      const events = await db.query<{ object_id: string; owner_firm_id: string; staff_id: string }>(
+        `select object_id, owner_firm_id, staff_id from security_events where tool = 'get_client'`,
+      );
+      expect(events).toEqual([{ object_id: 'cl_hl_acme', owner_firm_id: HL, staff_id: 'st_maya' }]);
+      await expect(db.forFirm(NB).query('select * from security_events')).rejects.toThrow(/permission denied/);
     });
 
     it('never searches another firm’s documents', async () => {
@@ -165,7 +171,7 @@ describe('two firms in one database', () => {
         expect(await lastAuditOf(db, NB), tool).toMatchObject({
           tool,
           outcome: 'denied',
-          detail: 'document of another firm',
+          detail: 'unknown id',
         });
       }
       const [doc] = await db.query<{ status: string; client_id: string | null }>(
@@ -185,12 +191,12 @@ describe('two firms in one database', () => {
 
     it('matches documents only against its own firm’s clients, even with the same client name', async () => {
       const nbDoc = (await getDocument(db.forFirm(NB), 'doc_inbox_northwind'))!;
-      const nbMatch = (await ensureMatch(db.forFirm(NB), services, nbDoc))!;
+      const nbMatch = (await ensureMatch(db.forFirm(NB), services, nbDoc, { role: 'assistant' }))!;
       expect(nbMatch.candidates.map((c) => c.clientId)).not.toContain('cl_hl_acme');
       expect(nbMatch.candidates[0]?.clientId).toBe('cl_acme');
 
       const hlDoc = (await getDocument(db.forFirm(HL), 'doc_hl_inbox_acme'))!;
-      const hlMatch = (await ensureMatch(db.forFirm(HL), services, hlDoc))!;
+      const hlMatch = (await ensureMatch(db.forFirm(HL), services, hlDoc, { role: 'assistant' }))!;
       expect(hlMatch.candidates.map((c) => c.clientId)).not.toContain('cl_acme');
       expect(hlMatch.candidates[0]?.clientId).toBe('cl_hl_acme');
     });
@@ -248,7 +254,7 @@ describe('two firms in one database', () => {
         staff_id: 'st_hl_lena',
         tool: 'dashboard:view_document',
         outcome: 'denied',
-        detail: 'document of another firm',
+        detail: 'unknown id',
       });
     });
 
@@ -275,7 +281,7 @@ describe('two firms in one database', () => {
         staff_id: 'st_tom',
         tool: 'download_document',
         outcome: 'denied',
-        detail: 'document of another firm',
+        detail: 'unknown id',
       });
       // Lena's own link works.
       const own = new URL(services.links.url('doc_hl_acme_invoice', 'st_hl_lena'));
@@ -283,16 +289,15 @@ describe('two firms in one database', () => {
     });
 
     it('won’t retry another firm’s job', async () => {
-      const { id } = await ingestDocument(db.forFirm(NB), services, {
+      const { jobId } = await ingestDocument(db.forFirm(NB), services, {
         bytes: await renderTextPdf('j', ['INVOICE\nBill to: Acme Ltd\nTotal due: $3.00']),
         mimeType: 'application/pdf',
         filename: 'j.pdf',
         uploadedBy: 'st_maya',
-        deferProcessing: true,
+        intakeJob: { createdBy: 'st_maya', batchId: null, idempotencyKey: null, maxAttempts: 1 },
       });
-      const { job } = await enqueue(db.forFirm(NB), { documentId: id, createdBy: 'st_maya' }, { maxAttempts: 1 });
-      await db.query(`update jobs set status = 'dead' where id = $1`, [job.id]);
-      const res = await api(`/api/jobs/${job.id}/retry`, LENA, { method: 'POST' });
+      await db.query(`update jobs set status = 'dead' where id = $1`, [jobId]);
+      const res = await api(`/api/jobs/${jobId}/retry`, LENA, { method: 'POST' });
       expect(res.status).toBe(404);
       expect(await lastAuditOf(db, HL)).toMatchObject({ tool: 'dashboard:retry_job', outcome: 'denied' });
     });
@@ -308,9 +313,8 @@ describe('two firms in one database', () => {
         mimeType: 'application/pdf',
         filename: 'hl.pdf',
         uploadedBy: 'st_hl_lena',
-        deferProcessing: true,
+        intakeJob: { createdBy: 'st_hl_lena', batchId: null, idempotencyKey: null, maxAttempts: 3 },
       });
-      await enqueue(hlDb, { documentId: id, createdBy: 'st_hl_lena' }, { maxAttempts: 3 });
       await createWorker({ db, services, config: loadConfig({ NODE_ENV: 'test' }).jobs }).runUntilIdle();
 
       const [doc] = await db.query<{ status: string; client_id: string; firm_id: string }>(

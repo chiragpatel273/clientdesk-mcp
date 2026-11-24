@@ -55,7 +55,7 @@ export function registerSearchDocuments(server: McpServer, ctx: ToolContext): vo
       runTool<Output>(ctx, 'search_documents', input, async () => {
         let clientId: string | undefined;
         if (input.client) {
-          const resolved = await resolveClient(ctx, input.client);
+          const resolved = await resolveClient(ctx, 'search_documents', input.client);
           if ('refusal' in resolved) return resolved.refusal;
           clientId = resolved.client.id;
         }

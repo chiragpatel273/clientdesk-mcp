@@ -11,7 +11,7 @@ loadDotEnv();
 const config = loadConfig();
 const services = createServices(config);
 const db = await openDatabase({ ...config, seedDemo: false }, console.log, services);
-const worker = createWorker({ db, services, config: config.jobs, log: console.log });
+const worker = createWorker({ db, services, config: config.jobs, log: console.log, idleMs: 2000 });
 worker.start();
 
 const shutdown = () => {

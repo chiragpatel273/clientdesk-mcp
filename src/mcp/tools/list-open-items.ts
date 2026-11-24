@@ -43,7 +43,7 @@ export function registerListOpenItems(server: McpServer, ctx: ToolContext): void
     },
     async (input) =>
       runTool<Output>(ctx, 'list_open_items', input, async () => {
-        const resolved = await resolveClient(ctx, input.client);
+        const resolved = await resolveClient(ctx, 'list_open_items', input.client);
         if ('refusal' in resolved) return resolved.refusal;
         const { client } = resolved;
 

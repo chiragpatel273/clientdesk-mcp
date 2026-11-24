@@ -183,8 +183,8 @@ const { searches, wide } = await usageScope(collect, async () => {
     });
   }
 
-  // Robustness check, not a target: both question variants (plain and paraphrased) for every searchable document, so
-  // a ranking change that only helps the 30 asked questions shows up here.
+  // Wider check, not a target: both question variants (plain and paraphrased) for every searchable document. It includes
+  // the 30 asked questions and was looked at while tuning: breadth, not an independent test.
   const wide = [];
   for (const doc of eligible) {
     for (const paraphrased of [false, true]) {
@@ -397,11 +397,11 @@ const md = [
     `${report.usage.errors ? `, ${report.usage.errors} failed calls` : ''}.` +
     (remote ? '' : ' Offline models: token counts are estimates (characters / 4), cost 0.'),
   '',
-  '## Robustness check (not a target)',
+  '## Wider check (not a target)',
   '',
   `Both question variants for every searchable document: ${report.robustness.questions} questions, ` +
     `hit rate ${pct(report.robustness.hitRate)}, citation accuracy ${pct(report.robustness.citationAccuracy)}. ` +
-    'A ranking change that only helped the 30 asked questions would show up here.',
+    'It includes the 30 asked questions and was looked at while tuning, so it shows breadth but is not an independent test.',
   '',
   ...(report.robustness.misses.length ? report.robustness.misses.map((m) => `- ${m}`) : ['- No misses.']),
   '',

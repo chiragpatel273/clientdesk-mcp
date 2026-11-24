@@ -1,21 +1,13 @@
 import { inferTaxYear } from '../ai/extraction.js';
 import { firmOf, type Db } from '../db/index.js';
 import { canAccessClient } from '../domain/access.js';
-import { recordAudit } from '../domain/audit.js';
-import {
-  getDocument,
-  markFiled,
-  markForReview,
-  readStoredText,
-  reindexDocument,
-  retitleAndReindex,
-} from '../domain/documents.js';
+import { getDocument, readStoredText, reindexDocument, titleForFiling } from '../domain/documents.js';
+import { DocumentTooLargeError } from '../documents/text.js';
 import { computeMatch, ensureExtraction } from '../domain/intake.js';
-import { addNote } from '../domain/open-items.js';
 import { findActorById } from '../domain/staff.js';
 import type { Actor } from '../domain/types.js';
 import type { AppServices } from '../services.js';
-import type { Job, Step } from './queue.js';
+import { completeFiling, completeReview, type Job, type Step } from './queue.js';
 
 /** A failure that retrying can't fix (the uploader lost access, the document was removed): dead-letter at once. */
 export class PermanentJobError extends Error {
@@ -34,6 +26,10 @@ export interface StepResult {
   done: boolean;
   /** For the audit log (partners only): what the step found. */
   detail?: string;
+  /** The audit row's name when it isn't the step's. */
+  auditAs?: string;
+  /** The step already recorded itself (filing and review are atomic with the job's own state). */
+  recorded?: boolean;
 }
 
 /**
@@ -49,17 +45,29 @@ async function uploader(db: Db, job: Job): Promise<Actor> {
   return actor;
 }
 
-/** Runs the step after `job.step`. Each step is safe to run twice (a worker can die after the work, before the record). */
+/**
+ * Runs the step after `job.step`. A worker can die after the work but before recording it, so steps before the decision
+ * only rebuild the same thing (text, passages, cached extraction, match), and the decision itself (file or review) is
+ * one statement with the job's state: it happens once or not at all.
+ */
 export async function runIntakeStep(db: Db, services: AppServices, job: Job): Promise<StepResult> {
   const actor = await uploader(db, job);
   const doc = await getDocument(db, job.documentId);
   if (!doc) throw new PermanentJobError('The document no longer exists.');
+  if (job.step === 'filed') {
+    // Already filed: rebuild its search passages with the client and title it has now.
+    await reindexDocument(db, services.embedder, doc.id);
+    return { step: 'filed', done: true, detail: services.embedder.model, auditAs: 'reindexed' };
+  }
   if (doc.status !== 'processing')
     throw new PermanentJobError(`The document is no longer being processed (${doc.status}).`);
 
   switch (job.step) {
     case 'stored': {
-      const { pages } = await readStoredText(db, services.files, doc.id);
+      const { pages } = await readStoredText(db, services.files, doc.id).catch((error: unknown) => {
+        // Trying again won't make it smaller.
+        throw error instanceof DocumentTooLargeError ? new PermanentJobError(error.message) : error;
+      });
       return { step: 'text_extracted', done: false, detail: `${pages} pages` };
     }
     case 'text_extracted': {
@@ -82,53 +90,31 @@ export async function runIntakeStep(db: Db, services: AppServices, job: Job): Pr
     }
     case 'matched': {
       const extraction = await ensureExtraction(db, services, doc);
-      // The filing rule is exactly the one file_document uses: matchClients decided `file` only for a clear match
-      // above the threshold, with look-alikes needing a second identifier.
-      const match = doc.match ?? (await computeMatch(db, services, doc, extraction));
+      // The filing rule is exactly the one file_document uses, recomputed now as it does: matchClients decides `file`
+      // only for a clear match above the threshold, with look-alikes needing a second identifier.
+      const match = await computeMatch(db, services, doc, extraction);
       const best = match.candidates[0];
       if (match.decision === 'file' && best && (await canAccessClient(db, actor, best.clientId))) {
-        const taxYear = inferTaxYear(extraction);
-        const filed = await markFiled(
-          db,
-          { id: doc.id, clientId: best.clientId, taxYear, docType: extraction.docType, staffId: actor.staffId },
-          ['processing'],
-        );
-        if (!filed) throw new PermanentJobError('The document changed while filing.');
-        await retitleAndReindex(db, services.embedder, doc.id, extraction);
-        const title = (await getDocument(db, doc.id))?.title ?? doc.title;
-        await addNote(db, {
+        const title = titleForFiling(doc, extraction);
+        const detail = `filed to ${best.clientId} at ${best.confidence}`;
+        const filed = await completeFiling(db, job, {
           clientId: best.clientId,
-          authorId: actor.staffId,
-          body: `Filed "${title}" automatically from batch intake (${Math.round(best.confidence * 100)}% match).`,
-          kind: 'filing',
+          taxYear: inferTaxYear(extraction),
+          docType: extraction.docType,
+          title,
+          note: `Filed "${title}" automatically from batch intake (${Math.round(best.confidence * 100)}% match).`,
+          detail,
         });
-        return { step: 'filed', done: true, detail: `filed to ${best.clientId} at ${best.confidence}` };
+        if (!filed) throw new PermanentJobError('The document changed while filing.');
+        return { step: 'filed', done: false, recorded: true, detail };
       }
       const reason = match.decision === 'file' ? 'The uploader is not assigned to the matched client.' : match.reason;
-      if (!(await markForReview(db, { id: doc.id, reason, staffId: actor.staffId }, ['processing']))) {
+      if (!(await completeReview(db, job, reason))) {
         throw new PermanentJobError('The document changed while sending it to review.');
       }
-      return { step: 'review', done: true, detail: reason };
+      return { step: 'review', done: true, recorded: true, detail: reason };
     }
     default:
       throw new PermanentJobError(`Nothing to do after step ${job.step}.`);
   }
-}
-
-/** One audit row per step, as the uploader, so the audit log shows the whole pipeline. */
-export async function auditStep(
-  db: Db,
-  job: Job,
-  step: string,
-  outcome: 'ok' | 'denied' | 'error',
-  detail?: string,
-): Promise<void> {
-  await recordAudit(db, {
-    staffId: job.createdBy,
-    tool: `job:${step}`,
-    input: { jobId: job.id, documentId: job.documentId, batchId: job.batchId, attempt: job.attempts },
-    outcome,
-    detail,
-    durationMs: 0,
-  });
 }

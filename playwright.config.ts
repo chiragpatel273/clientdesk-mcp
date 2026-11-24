@@ -6,6 +6,9 @@ import { defineConfig, devices } from '@playwright/test';
  * starts the server on :3399 and runs every spec in Chromium.
  */
 const PORT = 3399;
+/** The same server in AUTH_MODE=oauth, and its fake sign-in provider (e2e/oauth-server.ts). */
+const OAUTH_PORT = 3400;
+const ISSUER_PORT = 3401;
 
 // Explicit offline settings: real environment variables win over `.env`, which may hold real keys or S3 settings.
 const serverEnv = {
@@ -32,6 +35,19 @@ const serverEnv = {
   VOYAGE_API_KEY: '',
 };
 
+const oauthEnv = {
+  ...serverEnv,
+  PORT: String(OAUTH_PORT),
+  AUTH_MODE: 'oauth',
+  PUBLIC_URL: `http://localhost:${OAUTH_PORT}`,
+  OAUTH_ISSUER: `http://localhost:${ISSUER_PORT}`,
+  DASHBOARD_CLIENT_ID: 'e2e-dashboard',
+  DASHBOARD_CLIENT_SECRET: 'e2e-dashboard-secret',
+  FILES_DIR: '.data/e2e-files-oauth',
+  E2E_ISSUER_PORT: String(ISSUER_PORT),
+  E2E_WAIT_FOR: `http://localhost:${PORT}/health`,
+};
+
 export default defineConfig({
   testDir: 'e2e',
   // One server and one database: specs run one at a time, in file order, so their data changes don't race.
@@ -48,14 +64,32 @@ export default defineConfig({
     screenshot: 'only-on-failure',
     video: 'off',
   },
-  projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
-  webServer: {
-    command: 'npm run dashboard:build && npx tsx src/main.ts',
-    url: `http://localhost:${PORT}/health`,
-    env: serverEnv,
-    timeout: 180_000,
-    reuseExistingServer: false,
-    stdout: 'ignore',
-    stderr: 'pipe',
-  },
+  projects: [
+    { name: 'chromium', testIgnore: /sign-in/, use: { ...devices['Desktop Chrome'] } },
+    {
+      name: 'oauth',
+      testMatch: /sign-in/,
+      use: { ...devices['Desktop Chrome'], baseURL: `http://localhost:${OAUTH_PORT}` },
+    },
+  ],
+  webServer: [
+    {
+      command: 'npm run dashboard:build && npx tsx src/main.ts',
+      url: `http://localhost:${PORT}/health`,
+      env: serverEnv,
+      timeout: 180_000,
+      reuseExistingServer: false,
+      stdout: 'ignore',
+      stderr: 'pipe',
+    },
+    {
+      command: 'npx tsx e2e/oauth-server.ts',
+      url: `http://localhost:${OAUTH_PORT}/health`,
+      env: oauthEnv,
+      timeout: 180_000,
+      reuseExistingServer: false,
+      stdout: 'ignore',
+      stderr: 'pipe',
+    },
+  ],
 });

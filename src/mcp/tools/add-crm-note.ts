@@ -41,7 +41,7 @@ export function registerAddCrmNote(server: McpServer, ctx: ToolContext): void {
             const message = 'An open item needs a tax year.';
             return { outcome: 'ok', text: message, structured: { status: 'invalid', message } };
           }
-          const resolved = await resolveClient(ctx, input.client);
+          const resolved = await resolveClient(ctx, 'add_crm_note', input.client);
           if ('refusal' in resolved) return resolved.refusal;
           const { client } = resolved;
 

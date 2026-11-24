@@ -1,6 +1,6 @@
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { Db } from '../db/index.js';
-import { usageScope } from '../ai/usage.js';
+import { errorCategory, usageScope } from '../ai/usage.js';
 import { recordAudit } from '../domain/audit.js';
 import type { Actor } from '../domain/types.js';
 import type { AppServices } from '../services.js';
@@ -31,6 +31,8 @@ function documentIdOf(input: unknown): string | null {
 export interface RunToolOptions {
   /** The tool changes data (its annotation says `readOnlyHint: false`). Read-only actors are refused before it runs. */
   writes?: boolean;
+  /** A read tool that may call a model and caches the result: refused to read-only (public demo) actors as well. */
+  costly?: boolean;
 }
 
 export const READ_ONLY_MESSAGE =
@@ -51,7 +53,7 @@ export async function runTool<T extends Record<string, unknown>>(
   try {
     // Checked here, not in each tool, so a new write tool can't forget it.
     const result: ToolResult<Record<string, unknown>> =
-      options.writes && ctx.actor.readOnly
+      (options.writes || options.costly) && ctx.actor.readOnly
         ? {
             outcome: 'denied',
             text: READ_ONLY_MESSAGE,
@@ -80,13 +82,12 @@ export async function runTool<T extends Record<string, unknown>>(
       structuredContent: result.structured,
     };
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
     await recordAudit(ctx.db, {
       staffId: ctx.actor.staffId,
       tool,
       input,
       outcome: 'error',
-      detail: message.slice(0, 500),
+      detail: errorCategory(error),
       durationMs: performance.now() - started,
     }).catch(() => undefined);
     return {

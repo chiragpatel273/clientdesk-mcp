@@ -1,11 +1,12 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { inferTaxYear } from '../../ai/extraction.js';
-import { canAccessClient } from '../../domain/access.js';
-import { getDocument, markFiled, retitleAndReindex } from '../../domain/documents.js';
-import { computeMatch, ensureExtraction } from '../../domain/intake.js';
+import { canAccessClient, noteCrossFirm } from '../../domain/access.js';
+import { recordAudit } from '../../domain/audit.js';
+import { getDocument, markFiled, refreshPassages, titleForFiling } from '../../domain/documents.js';
+import { computeMatch, ensureExtraction, ensureText } from '../../domain/intake.js';
 import { closeOpenItem } from '../../domain/open-items.js';
-import { redactHiddenClients, notFoundAudit } from '../document-access.js';
+import { notFoundAudit, redactHiddenClients, STILL_PROCESSING } from '../document-access.js';
 import { runTool, type ToolContext } from '../run-tool.js';
 
 export const FileDocumentOutput = {
@@ -58,6 +59,7 @@ export function registerFileDocument(server: McpServer, ctx: ToolContext): void 
         async () => {
           // Access first, from the id given now: never trust that an earlier tool call checked it.
           if (!(await canAccessClient(ctx.db, ctx.actor, input.clientId))) {
+            await noteCrossFirm(ctx.db, ctx.actor, 'file_document', 'client', input.clientId);
             const message = 'You are not assigned to that client, so you cannot file documents for it.';
             return {
               outcome: 'denied',
@@ -66,30 +68,31 @@ export function registerFileDocument(server: McpServer, ctx: ToolContext): void 
               detail: `client ${input.clientId}`,
             };
           }
-          const doc = await getDocument(ctx.db, input.documentId);
-          if (!doc) {
+          const found = await getDocument(ctx.db, input.documentId);
+          if (!found) {
             const message = `No document with id ${input.documentId}.`;
             return {
-              ...(await notFoundAudit(ctx, 'document', input.documentId)),
+              ...(await notFoundAudit(ctx, 'file_document', 'document', input.documentId)),
               text: message,
               structured: { status: 'not_found', message },
             };
           }
-          if (doc.status !== 'inbox') {
+          if (found.status !== 'inbox') {
             const message =
-              doc.status === 'review'
+              found.status === 'review'
                 ? 'This document is in the review queue; a partner resolves it from the dashboard.'
-                : doc.status === 'processing'
-                  ? 'Batch intake is processing this document; it will be filed or sent to review automatically.'
+                : found.status === 'processing'
+                  ? STILL_PROCESSING
                   : 'This document is already filed.';
             return {
               outcome: 'ok',
               text: message,
               structured: { status: 'refused', message },
-              detail: `status ${doc.status}`,
+              detail: `status ${found.status}`,
             };
           }
 
+          const doc = await ensureText(ctx.db, ctx.services, found);
           const extraction = await ensureExtraction(ctx.db, ctx.services, doc);
           const match = await computeMatch(ctx.db, ctx.services, doc, extraction);
           const best = match.candidates[0];
@@ -116,16 +119,29 @@ export function registerFileDocument(server: McpServer, ctx: ToolContext): void 
               taxYear,
               docType,
               staffId: ctx.actor.staffId,
+              title: titleForFiling(doc, extraction),
             }))
           ) {
             const message = 'The document changed while filing (someone else may have processed it). Check the inbox.';
             return { outcome: 'ok', text: message, structured: { status: 'refused', message } };
           }
-          await retitleAndReindex(ctx.db, ctx.services.embedder, doc.id, extraction);
+          await refreshPassages(ctx.db, ctx.services.embedder, doc.id);
           const filed = (await getDocument(ctx.db, doc.id))!;
           const openItemClosed = input.openItemId
             ? await closeOpenItem(ctx.db, { id: input.openItemId, clientId: best.clientId, documentId: doc.id })
             : null;
+          if (input.openItemId && !openItemClosed) {
+            // Filing was right; the open item id wasn't. Logged on its own, so a made-up id doesn't hide behind an `ok`.
+            await noteCrossFirm(ctx.db, ctx.actor, 'file_document', 'open_item', input.openItemId);
+            await recordAudit(ctx.db, {
+              staffId: ctx.actor.staffId,
+              tool: 'file_document:open_item',
+              input: { openItemId: input.openItemId },
+              outcome: 'denied',
+              detail: 'not an open item of this client',
+              durationMs: 0,
+            });
+          }
 
           const link = ctx.services.links.url(doc.id, ctx.actor.staffId);
           const message =

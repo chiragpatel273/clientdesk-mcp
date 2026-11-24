@@ -8,12 +8,12 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import express, { type Express, type NextFunction, type Request, type RequestHandler, type Response } from 'express';
-import { usageScope } from './ai/usage.js';
+import { errorCategory, usageScope } from './ai/usage.js';
 import type { OAuthSetup } from './auth/oauth.js';
 import type { Config } from './config.js';
 import type { Db } from './db/index.js';
 import { projectRoot } from './db/migrate.js';
-import { belongsToAnotherFirm } from './domain/access.js';
+import { noteCrossFirm } from './domain/access.js';
 import { recordAudit } from './domain/audit.js';
 import { getDocument } from './domain/documents.js';
 import { findActorByEmail, findActorById } from './domain/staff.js';
@@ -88,6 +88,8 @@ export interface HttpDeps {
   config: Config;
   services: AppServices;
   oauth?: OAuthSetup;
+  /** Called when a background job is queued, so an in-process worker looks at once. */
+  onJobQueued?: () => void;
   /** Where `dashboard/dist` and `eval/report.json` live. Defaults to the repo root. */
   projectRoot?: string;
 }
@@ -150,7 +152,7 @@ export function createHttpApp(deps: HttpDeps): Express {
       await server.connect(transport);
       await transport.handleRequest(req, res, req.body);
     } catch (error) {
-      console.error('MCP request failed', error);
+      console.error('MCP request failed:', errorCategory(error));
       if (!res.headersSent) jsonRpcError(res, 500, -32603, 'Internal server error');
     }
   });
@@ -177,22 +179,20 @@ export function createHttpApp(deps: HttpDeps): Express {
     const firmDb = db.forFirm(actor.firmId);
     const doc = await getDocument(firmDb, documentId);
     if (!doc) {
-      // Another firm's document looks exactly like a missing one, but the attempt is recorded.
-      if (await belongsToAnotherFirm(firmDb, 'document', documentId)) {
-        await recordAudit(firmDb, {
-          staffId: actor.staffId,
-          tool: 'download_document',
-          input: { documentId },
-          outcome: 'denied',
-          detail: 'document of another firm',
-          durationMs: 0,
-        });
-      }
+      await noteCrossFirm(firmDb, actor, 'download_document', 'document', documentId);
+      await recordAudit(firmDb, {
+        staffId: actor.staffId,
+        tool: 'download_document',
+        input: { documentId },
+        outcome: 'denied',
+        detail: 'unknown id',
+        durationMs: 0,
+      });
       res.status(404).type('text/plain').send('Document not found.');
       return;
     }
     const match = await usageScope({ db: firmDb, staffId: actor.staffId, source: 'mcp', documentId }, () =>
-      ensureMatch(firmDb, services, doc),
+      ensureMatch(firmDb, services, doc, actor),
     );
     const access = await canSeeDocument({ db: firmDb, actor }, doc, match);
     await recordAudit(firmDb, {
@@ -212,7 +212,7 @@ export function createHttpApp(deps: HttpDeps): Express {
 
   // The staff dashboard: sign-in, JSON API and the built React app.
   mountDashboardAuth(app, { db, config, oauth });
-  app.use('/api', createApiRouter({ db, config, services, projectRoot: root }));
+  app.use('/api', createApiRouter({ db, config, services, projectRoot: root, onJobQueued: deps.onJobQueued }));
   const dist = join(root, 'dashboard', 'dist');
   if (existsSync(join(dist, 'index.html'))) {
     app.use('/dashboard', express.static(dist, { index: 'index.html', maxAge: '1h' }));
@@ -221,7 +221,7 @@ export function createHttpApp(deps: HttpDeps): Express {
   }
 
   app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
-    console.error('Request failed', err instanceof Error ? err.message : err);
+    console.error('Request failed:', errorCategory(err));
     if (!res.headersSent) res.status(500).json({ error: 'Internal server error' });
   });
 

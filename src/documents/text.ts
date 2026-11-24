@@ -14,6 +14,19 @@ export interface ExtractedText {
   textLayer: boolean;
 }
 
+/** More than any document a firm receives; enough to stop one file from tying up the server. */
+const MAX_PAGES = 300;
+const MAX_CHARS = 500_000;
+
+export class DocumentTooLargeError extends Error {
+  override name = 'DocumentTooLargeError';
+}
+
+function checkSize(pages: number, chars: number): void {
+  if (pages > MAX_PAGES) throw new DocumentTooLargeError(`The document has more than ${MAX_PAGES} pages`);
+  if (chars > MAX_CHARS) throw new DocumentTooLargeError(`The document has more than ${MAX_CHARS} characters of text`);
+}
+
 /** A page with fewer characters than this is treated as having no text layer. */
 const MIN_PAGE_CHARS = 40;
 
@@ -55,11 +68,16 @@ export async function extractPdfText(bytes: Uint8Array): Promise<ExtractedText> 
   });
   try {
     const pdf = await task.promise;
+    checkSize(pdf.numPages, 0);
     const pages: string[] = [];
+    let chars = 0;
     for (let n = 1; n <= pdf.numPages; n++) {
       const page = await pdf.getPage(n);
       const content = await page.getTextContent();
-      pages.push(pageToText(content.items.flatMap((i) => ('str' in i ? [{ str: i.str, transform: i.transform }] : []))));
+      pages.push(
+        pageToText(content.items.flatMap((i) => ('str' in i ? [{ str: i.str, transform: i.transform }] : []))),
+      );
+      checkSize(n, (chars += pages.at(-1)!.length));
     }
     const withText = pages.filter((p) => p.length >= MIN_PAGE_CHARS).length;
     return { pages, textLayer: withText >= Math.ceil(pages.length / 2) };
@@ -70,7 +88,9 @@ export async function extractPdfText(bytes: Uint8Array): Promise<ExtractedText> 
 
 /** Plain-text uploads: a form feed (\f) separates pages, as `pdftotext` writes them. */
 export function extractPlainText(bytes: Uint8Array): ExtractedText {
-  const pages = new TextDecoder().decode(bytes).split('\f');
+  const text = new TextDecoder().decode(bytes);
+  const pages = text.split('\f');
+  checkSize(pages.length, text.length);
   return { pages: pages.map((p) => p.trim()), textLayer: true };
 }
 

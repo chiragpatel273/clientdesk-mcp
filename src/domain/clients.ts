@@ -41,7 +41,7 @@ export async function findClients(db: Db, query: string): Promise<ClientRef[]> {
   if (exact.length > 0) return exact;
   return db.query<{ id: string; name: string }>(
     `select id, name from clients
-     where firm_id = $2 and lower(name) like '%' || lower($1) || '%'
+     where firm_id = $2 and position(lower($1) in lower(name)) > 0
      order by name limit 10`,
     [q, firmOf(db)],
   );

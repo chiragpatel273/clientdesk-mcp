@@ -45,7 +45,8 @@ and the exact next steps. Update its Status and Next up sections when a day's wo
 0. **Firms are isolated twice.** Request code uses `db.forFirm(actor.firmId)` (never the unscoped handle); every
    query on firm data filters `firm_id = firmOf(db)`; Postgres RLS enforces the same on every scoped query. The
    unscoped (owner) handle is only for identity lookup, the job queue's claim/advance, migrations and start-up.
-   An id of another firm answers like "not found" and is audited as `denied`.
+   Every unknown id answers "not found" and is audited as `denied`, the same whether it is another firm's or nobody's;
+   `noteCrossFirm` records real cross-firm attempts for the owner.
 1. **Access is enforced in code, never in prompts.** Any tool touching client data calls `canAccessClient` or
    `partitionByAccess` before reading it (cross-client queries filter by `accessibleClientIds`). A denied result
    returns `status: 'denied'` with no client data in it, not even another client's name in a reason.

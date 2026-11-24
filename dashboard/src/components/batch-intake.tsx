@@ -1,5 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CircleAlert, CircleCheck, Clock, FileStack, FolderInput, Loader2, RotateCcw, Upload } from 'lucide-react';
+import {
+  CircleAlert,
+  CircleCheck,
+  Clock,
+  Copy,
+  FileStack,
+  FolderInput,
+  Loader2,
+  RotateCcw,
+  Upload,
+} from 'lucide-react';
 import { useRef, useState } from 'react';
 import { api, type JobItem, type JobStep } from '../api';
 import { contentTypeFor } from '../lib/files';
@@ -20,7 +30,7 @@ const PIPELINE: { step: JobStep; label: string }[] = [
 ];
 
 function progress(item: JobItem): number {
-  if (item.status === 'done') return PIPELINE.length;
+  if (item.status === 'done' || item.step === 'filed') return PIPELINE.length;
   return PIPELINE.findIndex((p) => p.step === item.step) + 1;
 }
 
@@ -28,6 +38,12 @@ function statusText(item: JobItem): string {
   if (item.status === 'done') {
     if (item.outcome?.kind === 'filed') return `Filed to ${item.outcome.clientName}`;
     return `Sent to review${item.outcome?.kind === 'review' && item.outcome.reason ? `: ${item.outcome.reason}` : ''}`;
+  }
+  if (item.step === 'filed' && item.outcome?.kind === 'filed') {
+    const filed = `Filed to ${item.outcome.clientName}`;
+    return item.status === 'dead'
+      ? `${filed}, but its search entries could not be updated: ${item.lastError ?? 'unknown error'}`
+      : `${filed}; updating search…`;
   }
   if (item.status === 'dead')
     return `Failed ${item.attempts} times, back in the inbox: ${item.lastError ?? 'unknown error'}`;
@@ -78,6 +94,35 @@ function JobRow({ item }: { item: JobItem }) {
   );
 }
 
+/** A picked file with no background job: the server already had it, or refused it. */
+interface JoblessFile {
+  key: string;
+  name: string;
+  kind: 'duplicate' | 'failed';
+  message: string;
+}
+
+function JoblessRow({ file }: { file: JoblessFile }) {
+  const failed = file.kind === 'failed';
+  return (
+    <li
+      className="flex items-start gap-2.5 rounded-lg border px-3 py-2 text-sm"
+      data-testid="batch-item"
+      data-status={file.kind}
+    >
+      {failed ? (
+        <CircleAlert className="mt-0.5 size-4 shrink-0 text-danger" aria-label="Not uploaded" />
+      ) : (
+        <Copy className="mt-0.5 size-4 shrink-0 text-warn" aria-label="Duplicate" />
+      )}
+      <div className="min-w-0 flex-1">
+        <p className="truncate font-medium">{file.name}</p>
+        <p className={cn('text-xs text-muted-foreground', failed && 'text-danger')}>{file.message}</p>
+      </div>
+    </li>
+  );
+}
+
 /**
  * Partners: pick up to 25 files; each is stored and handed to the background job queue, which reads, indexes,
  * extracts, matches and files it (or sends it to review) step by step. Progress is polled until every job settles.
@@ -87,6 +132,8 @@ export function BatchIntakeCard() {
   const inputRef = useRef<HTMLInputElement>(null);
   const [batchId, setBatchId] = useState<string | null>(null);
   const [rejected, setRejected] = useState<string[]>([]);
+  // Files that never became a job (already uploaded before, or refused): the server's job list can't show them.
+  const [jobless, setJobless] = useState<JoblessFile[]>([]);
 
   const start = useMutation({
     mutationFn: async (files: File[]) => {
@@ -95,9 +142,18 @@ export function BatchIntakeCard() {
       if (accepted.length === 0) throw new Error('Choose PDF or .txt files.');
       const { id } = await api.createBatch(accepted.length);
       setBatchId(id);
+      setJobless([]);
       for (const [i, file] of accepted.entries()) {
-        // A retried request with the same key is answered with the first result, never processed twice.
-        await api.uploadToBatch(id, file, contentTypeFor(file)!, `${id}-${i}`);
+        const skip = (kind: JoblessFile['kind'], message: string) =>
+          setJobless((prev) => [...prev, { key: `${id}-${i}`, name: file.name, kind, message }]);
+        try {
+          // A retried request with the same key is answered with the first result, never processed twice.
+          const result = await api.uploadToBatch(id, file, contentTypeFor(file)!, `${id}-${i}`);
+          if (result.duplicate) skip('duplicate', 'Already in ClientDesk: this file was uploaded before.');
+        } catch (e) {
+          // One refused file must not stop the rest of the batch.
+          skip('failed', e instanceof Error ? e.message : 'Upload failed.');
+        }
         void queryClient.invalidateQueries({ queryKey: ['batch', id] });
       }
       return id;
@@ -109,8 +165,12 @@ export function BatchIntakeCard() {
     queryFn: () => api.batch(batchId!),
     enabled: batchId !== null,
     refetchInterval: (query) => {
-      const items = query.state.data?.items ?? [];
-      const settled = items.length > 0 && items.every((i) => i.status === 'done' || i.status === 'dead');
+      // Settled once every file is accounted for: each is a finished job, or never became one.
+      const data = query.state.data;
+      const settled =
+        data !== undefined &&
+        data.items.length + jobless.length >= data.total &&
+        data.items.every((i) => i.status === 'done' || i.status === 'dead');
       if (settled && !start.isPending) {
         void queryClient.invalidateQueries({ queryKey: ['inbox'] });
         void queryClient.invalidateQueries({ queryKey: ['stats'] });
@@ -122,7 +182,10 @@ export function BatchIntakeCard() {
   });
 
   const items = batch.data?.items ?? [];
-  const finished = items.filter((i) => i.status === 'done').length;
+  const notUploaded = jobless.filter((f) => f.kind === 'failed').length;
+  const duplicates = jobless.length - notUploaded;
+  // A duplicate needs no work, so it counts as dealt with; a refused file doesn't.
+  const finished = items.filter((i) => i.status === 'done').length + duplicates;
 
   return (
     <Card>
@@ -161,11 +224,15 @@ export function BatchIntakeCard() {
           <>
             <p className="text-xs text-muted-foreground" aria-live="polite">
               {finished} of {batch.data.total} processed
+              {notUploaded > 0 && ` · ${notUploaded} not uploaded`}
               {finished === batch.data.total && <CircleCheck className="ml-1 inline size-3.5 text-ok" aria-hidden />}
             </p>
             <ul className="grid gap-2">
               {items.map((item) => (
                 <JobRow key={item.jobId} item={item} />
+              ))}
+              {jobless.map((f) => (
+                <JoblessRow key={f.key} file={f} />
               ))}
             </ul>
           </>
@@ -195,7 +262,7 @@ export function DeadLetterCard() {
           <CircleAlert className="size-4 text-danger" /> Failed intake jobs
         </CardTitle>
         <CardDescription>
-          These stopped after their retries; the documents are back in the inbox. Retry once the cause is fixed.
+          These stopped after their retries; unfiled documents are back in the inbox. Retry once the cause is fixed.
         </CardDescription>
       </CardHeader>
       <CardContent>
