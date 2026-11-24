@@ -241,8 +241,8 @@ A temporary local Postgres 18, owned by a role without superuser rights, deleted
 - **Uploads:** 25 files at once into a batch of 5 took 5; the same key four times at once on a batch's last place gave one job in
   20 of 20 rounds; the same file under ten keys at once gave one document.
 - **Queue:** two worker processes with slow, failing steps, a stuck timeout shorter than a step, database connections killed
-  throughout, and in the second run one worker killed outright. 176 of 176 jobs finished, each with exactly one result, note and
-  audit row; none filed to a client not named on it; no orphans, no stale passages, no deadlocks (143 retries and 3 dead letters in
+  throughout, and in the second run one worker killed outright. 176 of 176 jobs finished, each with one outcome and
+  one audit row for it, and as many filing notes as filings (136, compared in total); none filed to a client not named on it; no orphans, no stale passages, no deadlocks (143 retries and 3 dead letters in
   the harder run).
 - **Firms:** 400 overlapping scoped queries, none saw another firm's rows.
 - **Found and fixed:** a connection dropped in the middle of a scoped query ended the server process. The first fix covered only idle
