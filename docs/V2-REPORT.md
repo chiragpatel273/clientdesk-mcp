@@ -211,8 +211,10 @@ role (there is none: all SQL is parameterised); usage counts a model's refusal a
 
 ## Second security review (2026-11-24)
 
-Another agent, new to the code, tried to break the fixes above. The job queue (103 injected faults, no duplicate or orphan), the
-migration on two kinds of existing database, and the protection of hidden clients held. These did not, and are now fixed, each
+Another agent, new to the code, tried to break the fixes above. On in-memory PGlite, which runs one query at a time, the job queue (103 injected faults,
+no duplicate or orphan), the migration on two kinds of existing database, and the protection of hidden clients held. The rewritten
+queue and migration 008 have not run on a real Postgres server, where queries truly overlap; the first review ran the older queue
+and migration 007 on one. These did not, and are now fixed, each
 with a test that failed first unless marked:
 
 - The freeze was only half fixed: a 98 KB PDF with 40,000 lines still took 22 s, and an unclosed bracket after "tax (" 36 s.
