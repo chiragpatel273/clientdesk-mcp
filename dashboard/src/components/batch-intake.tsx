@@ -132,13 +132,16 @@ export function BatchIntakeCard() {
   const inputRef = useRef<HTMLInputElement>(null);
   const [batchId, setBatchId] = useState<string | null>(null);
   const [rejected, setRejected] = useState<string[]>([]);
+  const [leftOut, setLeftOut] = useState<string[]>([]);
   // Files that never became a job (already uploaded before, or refused): the server's job list can't show them.
   const [jobless, setJobless] = useState<JoblessFile[]>([]);
 
   const start = useMutation({
     mutationFn: async (files: File[]) => {
-      const accepted = files.filter((f) => contentTypeFor(f) && f.size > 0).slice(0, MAX_FILES);
-      setRejected(files.filter((f) => !accepted.includes(f)).map((f) => f.name));
+      const usable = files.filter((f) => contentTypeFor(f) && f.size > 0);
+      const accepted = usable.slice(0, MAX_FILES);
+      setRejected(files.filter((f) => !usable.includes(f)).map((f) => f.name));
+      setLeftOut(usable.slice(MAX_FILES).map((f) => f.name));
       if (accepted.length === 0) throw new Error('Choose PDF or .txt files.');
       const { id } = await api.createBatch(accepted.length);
       setBatchId(id);
@@ -219,6 +222,12 @@ export function BatchIntakeCard() {
         {start.isError && <p className="text-sm text-danger">{start.error.message}</p>}
         {rejected.length > 0 && (
           <p className="text-xs text-muted-foreground">Skipped (not PDF or .txt, or empty): {rejected.join(', ')}</p>
+        )}
+        {leftOut.length > 0 && (
+          <p className="text-xs text-muted-foreground">
+            Only {MAX_FILES} files at a time. Left out: {leftOut.slice(0, 5).join(', ')}
+            {leftOut.length > 5 && ` and ${leftOut.length - 5} more`}
+          </p>
         )}
         {batch.data && (
           <>

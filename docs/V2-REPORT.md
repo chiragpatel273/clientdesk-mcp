@@ -61,7 +61,7 @@ the offline extractor and embeddings), and no existing history was rewritten.
 
 ### Phase 5: Playwright end-to-end tests
 
-14 tests, Chromium, about 60 s locally including the dashboard build and server start (budget: 3 minutes): partner
+15 tests, Chromium, about 60 s locally including the dashboard build and server start (budget: 3 minutes): partner
 sees all pages; assistant refused an unassigned client (a real MCP call) and the refusal is in the audit log;
 assistant sees only their own audit rows without details; partner resolves a review item; demo visitor reads
 everything and an upload is refused and audited; batch upload shows progress; the Usage page shows the batch and the
@@ -121,7 +121,7 @@ all three 100% / 98.6%. No asked question got worse; one wider question did (eng
 0.0484). Extraction is unchanged in v2, so field accuracy and review rate only move with a model run. The Groq column
 needs a rerun to show v2's search changes.
 
-Tests: 104 before v2; now 202 vitest tests and 14 Playwright tests.
+Tests: 104 before v2; now 205 vitest tests and 15 Playwright tests.
 
 ## Decisions made on your behalf
 
@@ -254,7 +254,7 @@ ANTHROPIC_API_KEY= GROQ_API_KEY= VOYAGE_API_KEY= npx tsx src/main.ts     # http:
 - **Usage:** after a batch, the Usage page (partners only) shows calls per day, per model and per source.
 - **Multiple firms:** user picker → "Lena Ortiz · Partner · Harbourline Tax Partners": the header, inbox, audit log and
   usage all switch to Harbourline; Northbridge's documents are invisible, even by id.
-- **Tests:** `npm run check` (202 tests), `npx playwright test` (14 tests, about a minute).
+- **Tests:** `npm run check` (205 tests), `npx playwright test` (15 tests, about a minute).
 
 ## Resume bullets (v2, real numbers)
 
@@ -269,7 +269,7 @@ the branch is pushed.
   escalations) behind a usage dashboard.
 - Hardened it through an independent security review: closed a public-visitor path that could disturb background jobs and
   trigger paid model calls, made job state transitions atomic, and removed a denial-of-service in text processing; grew
-  the suite from 104 to 202 tests plus 14 Playwright end-to-end tests.
+  the suite from 104 to 205 tests plus 15 Playwright end-to-end tests.
 - Improved RAG citation ranking (offline eval: 29 → 30 of 30 questions cited to the right page) and published the method,
   the misses and an ablation of each change.
 

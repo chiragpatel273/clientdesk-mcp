@@ -215,12 +215,26 @@ export function createHttpApp(deps: HttpDeps): Express {
   app.use('/api', createApiRouter({ db, config, services, projectRoot: root, onJobQueued: deps.onJobQueued }));
   const dist = join(root, 'dashboard', 'dist');
   if (existsSync(join(dist, 'index.html'))) {
-    app.use('/dashboard', express.static(dist, { index: 'index.html', maxAge: '1h' }));
-    app.get(/^\/dashboard(\/.*)?$/, (_req, res) => res.sendFile(join(dist, 'index.html')));
+    // Built files have a hash in their name, so they never change: keep them. The page that names them must be checked every
+    // time, or after a deploy a browser would ask for files that no longer exist (which are a 404, not the page).
+    app.use(
+      '/dashboard/assets',
+      express.static(join(dist, 'assets'), { index: false, immutable: true, maxAge: '365d', fallthrough: false }),
+    );
+    const page = { headers: { 'cache-control': 'no-cache' }, cacheControl: false };
+    app.use(
+      '/dashboard',
+      express.static(dist, { index: false, cacheControl: false, setHeaders: (res) => void res.set(page.headers) }),
+    );
+    app.get(/^\/dashboard(\/.*)?$/, (_req, res) => res.sendFile(join(dist, 'index.html'), page));
     app.get('/', (_req, res) => res.redirect('/dashboard/'));
   }
 
   app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
+    if ((err as { status?: unknown } | null)?.status === 404 && !res.headersSent) {
+      res.status(404).type('text/plain').send('Not found');
+      return;
+    }
     console.error('Request failed:', errorCategory(err));
     if (!res.headersSent) res.status(500).json({ error: 'Internal server error' });
   });

@@ -295,7 +295,7 @@ Nothing was blocked in the build. These need the owner (details and commands in 
 
 - **v2 (2026-11-19, branch `v2`, not merged or deployed):** all six phases built offline and committed one by one:
   1 Try the demo, 2 search (citation 96.7% → 100% offline, same questions), 3 batch intake on a Postgres job queue, 5 Playwright
-  E2E, 6 LLM usage and cost, 4 multiple firms with RLS. 202 vitest tests + 14 Playwright tests, offline eval,
+  E2E, 6 LLM usage and cost, 4 multiple firms with RLS. 205 vitest tests + 15 Playwright tests, offline eval,
   both builds and the Docker image pass. Report: `docs/V2-REPORT.md`.
 
 - **Day 1 (done):** schema and migrations, PGlite/pg `Db`, demo firm, `get_client` with access check + audit, stateless

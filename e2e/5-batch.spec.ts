@@ -104,3 +104,18 @@ test('one file the server refuses does not stop the rest of the batch', async ({
   await expect(page.locator('[data-testid=batch-item][data-status=done]')).toContainText('accepted.txt');
   await expect(page.getByText('1 of 2 processed · 1 not uploaded')).toBeVisible();
 });
+
+test('picking more than 25 files says which were left out, and why', async ({ page }) => {
+  await signInAs(page, 'Maya Rao');
+  await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: /Inbox/ }).click();
+  // Nothing needs uploading to see the message: refuse the batch itself.
+  await page.route('**/api/batches', (route) =>
+    route.fulfill({ status: 503, contentType: 'application/json', body: '{"error":"not now"}' }),
+  );
+  const many = Array.from({ length: 27 }, (_, i) => file(`many-${i + 1}.txt`, [`Document ${i + 1}`]));
+  await page
+    .getByTestId('batch-input')
+    .setInputFiles([...many, { name: 'photo.png', mimeType: 'image/png', buffer: Buffer.from('x') }]);
+  await expect(page.getByText('Only 25 files at a time. Left out: many-26.txt, many-27.txt')).toBeVisible();
+  await expect(page.getByText('Skipped (not PDF or .txt, or empty): photo.png')).toBeVisible();
+});

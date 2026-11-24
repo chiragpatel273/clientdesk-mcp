@@ -411,16 +411,34 @@ export async function reindexDocument(db: Db, embedder: Embedder, id: string): P
   );
 }
 
+/** When a rebuild fails it is tried again after these pauses; after the last, at the next start. */
+const REPAIR_DELAYS_MS = [60_000, 5 * 60_000, 15 * 60_000, 60 * 60_000];
+const repairing = new Set<string>();
+
 /**
  * Rebuilds passages after filing, when the document is already filed: a failure (the embedding service is down) must not
- * fail the filing. The document stays marked stale and is rebuilt on the next start.
+ * fail the filing. The old passages stay and the rebuild is tried again by itself; the document also stays marked stale, so
+ * a restart repairs it too.
  */
-export async function refreshPassages(db: Db, embedder: Embedder, id: string): Promise<boolean> {
+export async function refreshPassages(
+  db: Db,
+  embedder: Embedder,
+  id: string,
+  delays: number[] = REPAIR_DELAYS_MS,
+): Promise<boolean> {
   try {
     await reindexDocument(db, embedder, id);
     return true;
   } catch (error) {
     console.error(`Could not rebuild search passages for ${id}: ${errorCategory(error)}`);
+    const [delay, ...later] = delays;
+    if (delay !== undefined && !repairing.has(id)) {
+      repairing.add(id);
+      setTimeout(() => {
+        repairing.delete(id);
+        void refreshPassages(db, embedder, id, later);
+      }, delay).unref();
+    }
     return false;
   }
 }

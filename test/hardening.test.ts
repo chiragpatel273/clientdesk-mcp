@@ -8,7 +8,14 @@ import { rulesExtractor } from '../src/ai/rules-extractor.js';
 import { loadConfig, type JobsConfig } from '../src/config.js';
 import type { Db } from '../src/db/index.js';
 import { extractPlainText } from '../src/documents/text.js';
-import { chunkPages, getDocument, ingestDocument, reindexDocument, reindexStale } from '../src/domain/documents.js';
+import {
+  chunkPages,
+  getDocument,
+  ingestDocument,
+  refreshPassages,
+  reindexDocument,
+  reindexStale,
+} from '../src/domain/documents.js';
 import { createHttpApp } from '../src/http.js';
 import { advance, claimNext, createBatch, getJob } from '../src/jobs/queue.js';
 import { createWorker } from '../src/jobs/worker.js';
@@ -316,6 +323,30 @@ describe('filing that survives a failing embedding service', () => {
     expect(await passage()).toContain('Acme Ltd |');
     expect(await reindexStale(nb(db), services.embedder)).toBe(0);
     await web.close();
+    await db.close();
+  }, 60_000);
+
+  it('a failed passage rebuild is tried again on its own, without a restart', async () => {
+    let failures = 2;
+    const local = localEmbedder();
+    const embedder = {
+      model: local.model,
+      embed: async (t: string[], k: 'document' | 'query') => {
+        if (failures-- > 0) throw new Error('Voyage embeddings failed (503)');
+        return local.embed(t, k);
+      },
+    };
+    const services = testServices();
+    const db = await demoDb();
+    const { id } = await inboxDoc(db, services, ACME);
+    await db.query(`update documents set title = 'Renamed', content_version = content_version + 1 where id = $1`, [id]);
+    expect(await refreshPassages(nb(db), embedder, id, [20, 20, 20])).toBe(false);
+    const passage = async () =>
+      (await db.query<{ content: string }>('select content from document_chunks where document_id = $1', [id]))[0]!
+        .content;
+    for (let i = 0; i < 50 && !(await passage()).includes('Renamed'); i++) await new Promise((r) => setTimeout(r, 20));
+    expect(await passage()).toContain('Renamed');
+    expect(failures).toBeLessThan(0);
     await db.close();
   }, 60_000);
 
