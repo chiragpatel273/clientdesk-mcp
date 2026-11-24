@@ -115,7 +115,7 @@ with a test.
 
 ## Numbers that matter to a client
 
-- 220 automated tests and 15 Playwright end-to-end tests, including a denied-path test with an audit check for every
+- 225 automated tests and 15 Playwright end-to-end tests, including a denied-path test with an audit check for every
   tool and 21 cross-firm isolation tests.
 - Citation accuracy offline: 29 of 30 before v2's ranking changes, 30 of 30 after, on the same questions.
 - 0 wrong-client filings on the labelled set; 98.1% field accuracy; 10% sent to review.

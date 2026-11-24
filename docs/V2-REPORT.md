@@ -121,7 +121,7 @@ all three 100% / 98.6%. No asked question got worse; one wider question did (eng
 0.0484). Extraction is unchanged in v2, so field accuracy and review rate only move with a model run. The Groq column
 needs a rerun to show v2's search changes.
 
-Tests: 104 before v2; now 220 vitest tests and 15 Playwright tests.
+Tests: 104 before v2; now 225 vitest tests and 15 Playwright tests.
 
 ## Decisions made on your behalf
 
@@ -157,14 +157,12 @@ second look:
 
 Nothing in the spec was skipped. Not verifiable from here:
 
-- **Migrations 007 and 008 on Neon.** 007 creates role `clientdesk_app` and grants it to the connecting user. They run on
-  PGlite, and the reviewer ran 007 on a local Postgres 18 as a non-superuser owner with `CREATEROLE`. 008 has run only on
-  PGlite, and neither has run on Neon; whether Neon's owner role may create roles is not confirmed here. Each migration is
-  one transaction, so a failing one changes nothing, but the ones before it stay applied.
+- **Migrations 007 and 008 on Neon.** They run on PGlite and on a real Postgres 18 (2026-11-24, below), as a non-superuser owner
+  that may create roles. They have not run on Neon, and whether Neon's owner role may create roles is not confirmed here. If it may
+  not, 007 fails ("permission denied to create role") and changes nothing; 003 to 006 stay applied.
 - **Going back.** After 007, v1's code can't write (its inserts don't name a firm), so rolling back the code means restoring
   the database too (Neon point-in-time restore). During the deploy itself, the old instance may log errors for the moment
   both run.
-- **The fix for dropped idle database connections** (`pool.on('error')`) is in, but only checked by reading.
 - **Real-model numbers** for v2's search changes (Groq, Claude, Voyage): not run, by the no-keys rule.
 - **Live demo:** the README and case study describe the deployed v2 (Try the demo, Usage page). Merge and deploy
   together so the live site matches.
@@ -199,7 +197,7 @@ by running them. Fixed; each has a test except the ones marked, the heartbeat an
 | A firm's own audit log showed whether an id exists in another firm                                             | Every unknown id logged the same; owner-only `security_events`                                     |
 | The demo could fill the audit log                                                                              | Rate limits on reads and writes; IPv6 counted per network                                          |
 | Other firms' batch and open-item ids weren't audited                                                           | Audited as unknown ids                                                                             |
-| The server crashed when Postgres dropped an idle connection                                                    | Error listener (no test)                                                                           |
+| The server crashed when Postgres dropped an idle connection                                                    | Error listeners: idle here, in use in the Postgres run below                                       |
 | References to other firms' rows in a few columns; new tables open by default; shared idempotency keys          | Same-firm foreign keys, default grants removed, keys per firm (migration 008)                      |
 | Typing a fragment listed other teams' clients; wildcards; a duplicate upload showed a hidden title             | Names only when typed exactly; literal matching; title withheld                                    |
 | Raw provider errors shown to partners and the demo; odd numbers gave 500; 15 MB buffered before the role check | Error categories only; numbers and ids checked; role check first                                   |
@@ -212,9 +210,7 @@ role (there is none: all SQL is parameterised); usage counts a model's refusal a
 ## Second security review (2026-11-24)
 
 Another agent, new to the code, tried to break the fixes above. On in-memory PGlite, which runs one query at a time, the job queue (103 injected faults,
-no duplicate or orphan), the migration on two kinds of existing database, and the protection of hidden clients held. The rewritten
-queue and migration 008 have not run on a real Postgres server, where queries truly overlap; the first review ran the older queue
-and migration 007 on one. These did not, and are now fixed, each
+no duplicate or orphan), the migration on two kinds of existing database, and the protection of hidden clients held. On a real Postgres server, see below. These did not, and are now fixed, each
 with a test that failed first unless marked:
 
 - The freeze was only half fixed: a 98 KB PDF with 40,000 lines still took 22 s, and an unclosed bracket after "tax (" 36 s.
@@ -234,6 +230,23 @@ with a test that failed first unless marked:
 Still open: two uploads racing for a batch's last place can leave an unused stored file (the storage key may not delete). A hung
 file-storage request has no timeout of its own (the job gives up after 30 minutes). Nobody has reviewed this second round of fixes
 independently. If `TRUST_PROXY=1` is the wrong number of hops on Render, all demo visitors share one rate limit: check it first.
+
+## Run on a real Postgres (2026-11-24)
+
+A temporary local Postgres 18, owned by a role without superuser rights, deleted afterwards. The vector column was a text stand-in
+(pgvector isn't installed there), so search ranking was not part of it, and it is not Neon.
+
+- **Migrations:** 001 to 008 on an empty database and on one made by v1's own code with its data; both start, and a second start
+  changes nothing. v1's code can't write afterwards, as expected.
+- **Uploads:** 25 files at once into a batch of 5 took 5; the same key four times at once on a batch's last place gave one job in
+  20 of 20 rounds; the same file under ten keys at once gave one document.
+- **Queue:** two worker processes with slow, failing steps, a stuck timeout shorter than a step, database connections killed
+  throughout, and in the second run one worker killed outright. 176 of 176 jobs finished, each with exactly one result, note and
+  audit row; none filed to a client not named on it; no orphans, no stale passages, no deadlocks (143 retries and 3 dead letters in
+  the harder run).
+- **Firms:** 400 overlapping scoped queries, none saw another firm's rows.
+- **Found and fixed:** a connection dropped in the middle of a scoped query ended the server process. The first fix covered only idle
+  connections.
 
 ## Your steps
 
@@ -280,7 +293,7 @@ ANTHROPIC_API_KEY= GROQ_API_KEY= VOYAGE_API_KEY= npx tsx src/main.ts     # http:
 - **Usage:** after a batch, the Usage page (partners only) shows calls per day, per model and per source.
 - **Multiple firms:** user picker → "Lena Ortiz · Partner · Harbourline Tax Partners": the header, inbox, audit log and
   usage all switch to Harbourline; Northbridge's documents are invisible, even by id.
-- **Tests:** `npm run check` (220 tests), `npx playwright test` (15 tests, about a minute).
+- **Tests:** `npm run check` (225 tests), `npx playwright test` (15 tests, about a minute).
 
 ## Resume bullets (v2, real numbers)
 
@@ -295,7 +308,7 @@ the branch is pushed.
   escalations) behind a usage dashboard.
 - Hardened it through an independent security review: closed a public-visitor path that could disturb background jobs and
   trigger paid model calls, made job state transitions atomic, and removed a denial-of-service in text processing; grew
-  the suite from 104 to 220 tests plus 15 Playwright end-to-end tests.
+  the suite from 104 to 225 tests plus 15 Playwright end-to-end tests.
 - Improved RAG citation ranking (offline eval: 29 → 30 of 30 questions cited to the right page) and published the method,
   the misses and an ablation of each change.
 

@@ -284,7 +284,7 @@ Build order: 1 → 2 → 3 → 5 → 6 → 4. Every phase must pass `npm run che
 
 Nothing was blocked in the build. These need the owner (details and commands in `docs/V2-REPORT.md`):
 
-- **Neon: migrations 007 and 008** (007 creates role `clientdesk_app`). Run on PGlite, 007 also on a local Postgres 18 as a
+- **Neon: migrations 007 and 008** (007 creates role `clientdesk_app`). Run on PGlite and on a local Postgres 18 as a
   non-superuser; not on Neon. After 007 the v1 code can't write, so a rollback needs a database restore.
 - **Render:** `DEMO_LOGIN=true` and `TRUST_PROXY=1` (in `render.yaml`; add by hand if the service isn't synced from
   the blueprint).
@@ -295,7 +295,7 @@ Nothing was blocked in the build. These need the owner (details and commands in 
 
 - **v2 (2026-11-19, branch `v2`, not merged or deployed):** all six phases built offline and committed one by one:
   1 Try the demo, 2 search (citation 96.7% → 100% offline, same questions), 3 batch intake on a Postgres job queue, 5 Playwright
-  E2E, 6 LLM usage and cost, 4 multiple firms with RLS. 220 vitest tests + 15 Playwright tests, offline eval,
+  E2E, 6 LLM usage and cost, 4 multiple firms with RLS. 225 vitest tests + 15 Playwright tests, offline eval,
   both builds and the Docker image pass. Report: `docs/V2-REPORT.md`.
 
 - **Day 1 (done):** schema and migrations, PGlite/pg `Db`, demo firm, `get_client` with access check + audit, stateless

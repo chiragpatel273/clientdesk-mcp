@@ -58,6 +58,36 @@ function scopedHandle(firmId: string, run: Scoped): Db {
   return handle;
 }
 
+/** Scoped queries on a `pg` pool: one connection, one transaction per query. */
+export function pgScoped(pool: Pick<pg.Pool, 'connect'>): Scoped {
+  return async (firmId, sql, params) => {
+    const conn = await pool.connect();
+    let broken = false;
+    // While a connection is checked out, the pool no longer listens for its errors: one dropped here (Neon does that) would
+    // be an unhandled event and end the process. The query itself fails too, and that is what the caller sees.
+    const onError = () => {
+      broken = true;
+    };
+    conn.on('error', onError);
+    try {
+      await conn.query(`begin; set local role ${APP_ROLE}`);
+      await conn.query(`select set_config('app.firm_id', $1, true)`, [firmId]);
+      const result = await conn.query(sql, params);
+      await conn.query('commit');
+      return result.rows;
+    } catch (error) {
+      await conn.query('rollback').catch(() => {
+        broken = true;
+      });
+      throw error;
+    } finally {
+      // A connection whose rollback failed may still be inside the transaction: never reuse it.
+      conn.removeListener('error', onError);
+      conn.release(broken ? true : undefined);
+    }
+  };
+}
+
 export async function createDb(url: string): Promise<Db> {
   if (url.startsWith('pglite://')) {
     const location = url.slice('pglite://'.length);
@@ -95,25 +125,7 @@ export async function createDb(url: string): Promise<Db> {
     pool.on('error', (error) =>
       console.error('Database connection lost:', (error as { code?: string }).code ?? 'idle'),
     );
-    const run: Scoped = async (firmId, sql, params) => {
-      const conn = await pool.connect();
-      let broken = false;
-      try {
-        await conn.query(`begin; set local role ${APP_ROLE}`);
-        await conn.query(`select set_config('app.firm_id', $1, true)`, [firmId]);
-        const result = await conn.query(sql, params);
-        await conn.query('commit');
-        return result.rows;
-      } catch (error) {
-        await conn.query('rollback').catch(() => {
-          broken = true;
-        });
-        throw error;
-      } finally {
-        // A connection whose rollback failed may still be inside the transaction: never reuse it.
-        conn.release(broken ? true : undefined);
-      }
-    };
+    const run = pgScoped(pool);
     const root: Db = {
       async query<T extends Record<string, unknown>>(sql: string, params: unknown[] = []) {
         const result = await pool.query<T>(sql, params);
