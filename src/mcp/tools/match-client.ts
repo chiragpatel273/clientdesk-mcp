@@ -69,8 +69,18 @@ export function registerMatchClient(server: McpServer, ctx: ToolContext): void {
             };
           }
 
-          const doc = await ensureText(ctx.db, ctx.services, found);
-          const extraction = await ensureExtraction(ctx.db, ctx.services, doc);
+          const read = await ensureText(ctx.db, ctx.services, found);
+          const extraction = await ensureExtraction(ctx.db, ctx.services, read);
+          const doc = (await getDocument(ctx.db, read.id)) ?? read;
+          if (doc.status === 'filed' || doc.status === 'processing') {
+            const message = 'The document changed while it was being read (someone else may have processed it).';
+            return {
+              outcome: 'denied',
+              text: message,
+              structured: { status: 'denied', message },
+              detail: `now ${doc.status}`,
+            };
+          }
           const match = await computeMatch(ctx.db, ctx.services, doc, extraction);
           const access = await canSeeDocument(ctx, doc, match);
           if (!access.allowed) {

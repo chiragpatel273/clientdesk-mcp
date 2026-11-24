@@ -34,19 +34,20 @@ type TextItem = { str: string; transform: number[] };
 
 /** Rebuilds reading-order lines from pdf.js text items (grouped by baseline, left to right). */
 function pageToText(items: TextItem[]): string {
-  const lines = new Map<number, { x: number; str: string }[]>();
+  const lines = new Map<number, { order: number; parts: { x: number; str: string }[] }>();
   for (const item of items) {
     if (!item.str) continue;
     const y = Math.round(item.transform[5] ?? 0);
     const x = item.transform[4] ?? 0;
-    const key = [...lines.keys()].find((k) => Math.abs(k - y) <= 2) ?? y;
-    const line = lines.get(key) ?? [];
-    line.push({ x, str: item.str });
-    lines.set(key, line);
+    // The line within 2 points that started first (looked up, not searched: a page can have tens of thousands of lines).
+    const near = [y, y + 1, y - 1, y + 2, y - 2].map((k) => lines.get(k)).filter((l) => l !== undefined);
+    const line = near.length ? near.reduce((a, b) => (a.order <= b.order ? a : b)) : { order: lines.size, parts: [] };
+    line.parts.push({ x, str: item.str });
+    if (!near.length) lines.set(y, line);
   }
   return [...lines.entries()]
     .sort(([a], [b]) => b - a)
-    .map(([, parts]) =>
+    .map(([, { parts }]) =>
       parts
         .sort((a, b) => a.x - b.x)
         .map((p) => p.str)
@@ -74,6 +75,10 @@ export async function extractPdfText(bytes: Uint8Array): Promise<ExtractedText> 
     for (let n = 1; n <= pdf.numPages; n++) {
       const page = await pdf.getPage(n);
       const content = await page.getTextContent();
+      checkSize(
+        n,
+        content.items.reduce((total, i) => total + ('str' in i ? i.str.length : 0), chars),
+      );
       pages.push(
         pageToText(content.items.flatMap((i) => ('str' in i ? [{ str: i.str, transform: i.transform }] : []))),
       );

@@ -195,6 +195,15 @@ export async function ingestDocument(
   const existing = await findExisting();
   if (existing) return existing;
 
+  // Nothing is stored for a batch that is already full. (The count that decides is taken with the insert below.)
+  if (input.intakeJob?.batchId) {
+    const [open] = await db.query('select 1 from batches where id = $1 and firm_id = $2 and accepted < total', [
+      input.intakeJob.batchId,
+      firmId,
+    ]);
+    if (!open) throw new BatchFullError();
+  }
+
   const id = input.id ?? `doc_${randomBytes(6).toString('hex')}`;
   const { pages, textLayer } = input.intakeJob
     ? { pages: [] as string[], textLayer: true }
@@ -248,7 +257,11 @@ export async function ingestDocument(
          select 'intake', $19::text, doc.id, $20::text, $21::text, $22::int, doc.firm_id from doc returning id`,
         [...params, job.batchId, job.createdBy, job.idempotencyKey, job.maxAttempts],
       );
-      if (!row) throw new BatchFullError();
+      if (!row) {
+        const raced = await findExisting();
+        if (raced) return raced;
+        throw new BatchFullError();
+      }
       return { id, duplicate: false, jobId: Number(row.id) };
     }
     await db.query(insertDocument, params);
@@ -258,7 +271,7 @@ export async function ingestDocument(
     if (raced) return raced;
     throw error;
   }
-  await reindexDocument(db, services.embedder, id);
+  await refreshPassages(db, services.embedder, id);
   return { id, duplicate: false, jobId: null };
 }
 
@@ -300,8 +313,8 @@ const KEY_FIELDS: Record<DocType, { name: string; label: string }[]> = {
   ],
 };
 
-// Bounded and anchored after a non-digit, so a long run of digits is scanned once, not once per digit.
-const AMOUNTS = /(?<![\d,])\(?-?\$?[ ]?\d{1,3}(?:,?\d{3}){0,4}\.\d{2}(?!\d)\)?/g;
+// Bounded, and never started inside a number: a long run of digits is scanned once, not once per digit.
+const AMOUNTS = /(?<!\d)(?<!\d,)\(?-?\$?\s?\d[\d,]{0,24}\.\d{2}\)?/g;
 const DATES =
   /\b(\d{4}-\d{1,2}-\d{1,2}|\d{1,2}\/\d{1,2}\/\d{4}|\d{1,2} [A-Za-z]{3,9},? \d{4}|[A-Za-z]{3,9} \d{1,2},? \d{4})\b/g;
 
@@ -383,10 +396,13 @@ export async function reindexDocument(db: Db, embedder: Embedder, id: string): P
       )
     : [];
   // One statement: passages are replaced in place and leftovers removed, so a crash can't leave the document with none,
-  // and two rebuilds at once can't collide. indexed_version records which content these passages were built from.
+  // and two rebuilds at once can't collide. If the document changed since it was read (it was filed, say), nothing is
+  // written: a slow rebuild must not overwrite what a newer one wrote. The change itself triggers a rebuild.
   await db.query(
-    `with fresh as (
-       select * from jsonb_to_recordset($3::jsonb) as x(i int, page int, content text, embedding text)
+    `with doc as (
+       select id from documents where id = $1 and firm_id = $2 and content_version = $7 for update
+     ), fresh as (
+       select x.* from doc, jsonb_to_recordset($3::jsonb) as x(i int, page int, content text, embedding text)
      ), put as (
        insert into document_chunks (id, document_id, page, chunk_index, content, embedding, embedding_model,
                                     passage_version, firm_id)
@@ -394,9 +410,10 @@ export async function reindexDocument(db: Db, embedder: Embedder, id: string): P
        on conflict (id) do update set page = excluded.page, content = excluded.content, embedding = excluded.embedding,
          embedding_model = excluded.embedding_model, passage_version = excluded.passage_version
      ), gone as (
-       delete from document_chunks where document_id = $1 and firm_id = $2 and chunk_index >= $6
+       delete from document_chunks
+       where document_id = $1 and firm_id = $2 and chunk_index >= $6 and exists (select 1 from doc)
      )
-     update documents set indexed_version = $7 where id = $1 and firm_id = $2`,
+     update documents set indexed_version = $7 from doc where documents.id = doc.id and documents.firm_id = $2`,
     [
       id,
       firmOf(db),
@@ -411,14 +428,49 @@ export async function reindexDocument(db: Db, embedder: Embedder, id: string): P
   );
 }
 
-/** When a rebuild fails it is tried again after these pauses; after the last, at the next start. */
+/** When rebuilds fail they are tried again after these pauses; after the last, at the next start. */
 const REPAIR_DELAYS_MS = [60_000, 5 * 60_000, 15 * 60_000, 60 * 60_000];
-const repairing = new Set<string>();
+const toRepair = new Map<string, () => Promise<void>>();
+let repairTimer: NodeJS.Timeout | null = null;
+let repairDue = Infinity;
+let repairRunning = false;
+
+/** One timer for everything that failed, worked through one by one: an outage must not end in a burst of requests. */
+function scheduleRepair(delays: number[]): void {
+  const [delay, ...later] = delays;
+  if (delay === undefined && !repairTimer) toRepair.clear();
+  if (delay === undefined || repairRunning || toRepair.size === 0) return;
+  // A new failure brings the next attempt forward; it never pushes it back.
+  if (Date.now() + delay >= repairDue) return;
+  if (repairTimer) clearTimeout(repairTimer);
+  repairDue = Date.now() + delay;
+  repairTimer = setTimeout(() => {
+    repairDue = Infinity;
+    repairRunning = true;
+    void (async () => {
+      let failedInARow = 0;
+      for (const [id, rebuild] of [...toRepair]) {
+        try {
+          await rebuild();
+          toRepair.delete(id);
+          failedInARow = 0;
+        } catch (error) {
+          console.error(`Could not rebuild search passages for ${id}: ${errorCategory(error)}`);
+          if (++failedInARow === 3) break; // still down, rather than one odd document
+        }
+      }
+      repairTimer = null;
+      repairRunning = false;
+      scheduleRepair(later);
+    })();
+  }, delay);
+  repairTimer.unref();
+}
 
 /**
- * Rebuilds passages after filing, when the document is already filed: a failure (the embedding service is down) must not
- * fail the filing. The old passages stay and the rebuild is tried again by itself; the document also stays marked stale, so
- * a restart repairs it too.
+ * Rebuilds passages of a document that is already stored or filed: a failure (the embedding service is down) must not fail
+ * that. The old passages stay and the rebuild is tried again by itself; the document also stays marked stale, so a restart
+ * repairs it too.
  */
 export async function refreshPassages(
   db: Db,
@@ -431,14 +483,8 @@ export async function refreshPassages(
     return true;
   } catch (error) {
     console.error(`Could not rebuild search passages for ${id}: ${errorCategory(error)}`);
-    const [delay, ...later] = delays;
-    if (delay !== undefined && !repairing.has(id)) {
-      repairing.add(id);
-      setTimeout(() => {
-        repairing.delete(id);
-        void refreshPassages(db, embedder, id, later);
-      }, delay).unref();
-    }
+    toRepair.set(id, () => reindexDocument(db, embedder, id));
+    scheduleRepair(delays);
     return false;
   }
 }
@@ -450,7 +496,7 @@ export async function refreshPassages(
 export async function reindexStale(
   db: Db,
   embedder: Embedder,
-  options: { all?: boolean; log?: (msg: string) => void } = {},
+  options: { all?: boolean; log?: (msg: string) => void; onFailure?: (id: string) => void } = {},
 ): Promise<number> {
   const rows = await db.query<{ id: string }>(
     `select d.id from documents d
@@ -464,6 +510,7 @@ export async function reindexStale(
   let rebuilt = 0;
   for (const [i, row] of rows.entries()) {
     if (await refreshPassages(db, embedder, row.id)) rebuilt++;
+    else options.onFailure?.(row.id);
     if ((i + 1) % 25 === 0) options.log?.(`Reindexed ${i + 1} of ${rows.length} documents...`);
   }
   return rebuilt;
@@ -601,11 +648,27 @@ export async function markFiled(
   return rows.length === 1;
 }
 
-export async function markForReview(db: Db, input: { id: string; reason: string; staffId: string }): Promise<boolean> {
+export async function markForReview(
+  db: Db,
+  input: { id: string; reason: string; staffId: string; audit?: { tool: string; input: unknown } },
+): Promise<boolean> {
   const rows = await db.query<{ id: string }>(
-    `update documents set status = 'review', review_reason = $2, sent_to_review_by = $3, sent_to_review_at = now()
-     where id = $1 and firm_id = $4 and status = 'inbox' returning id`,
-    [input.id, input.reason, input.staffId, firmOf(db)],
+    `with d as (
+       update documents set status = 'review', review_reason = $2, sent_to_review_by = $3, sent_to_review_at = now()
+       where id = $1 and firm_id = $4 and status = 'inbox' returning id
+     ), a as (
+       insert into audit_log (firm_id, staff_id, tool, input, outcome, duration_ms)
+       select $4, $3, $5, $6::jsonb, 'ok', 0 from d where $5::text is not null
+     )
+     select id from d`,
+    [
+      input.id,
+      input.reason,
+      input.staffId,
+      firmOf(db),
+      input.audit?.tool ?? null,
+      input.audit ? JSON.stringify(maskSensitive(input.audit.input) ?? null) : null,
+    ],
   );
   return rows.length === 1;
 }

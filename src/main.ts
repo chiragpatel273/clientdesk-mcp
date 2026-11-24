@@ -1,5 +1,6 @@
 import { setupOAuth } from './auth/oauth.js';
-import { openDatabase } from './bootstrap.js';
+import { errorCategory } from './ai/usage.js';
+import { openDatabase, rebuildPassages } from './bootstrap.js';
 import { baseUrl, loadConfig, loadDotEnv } from './config.js';
 import { createHttpApp } from './http.js';
 import { createWorker } from './jobs/worker.js';
@@ -38,6 +39,9 @@ console.log(
 );
 
 worker?.start();
+void rebuildPassages(db, console.log, services).catch((error: unknown) =>
+  console.error(`Could not check search passages: ${errorCategory(error)}`),
+);
 
 const shutdown = () => {
   server.close(() => {

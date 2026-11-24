@@ -1,6 +1,6 @@
 # ClientDesk accuracy report
 
-Generated 2026-11-24T14:56:56.120Z · extractor **rules-v1 (offline baseline)** · embeddings **local-hash-v1** · filing threshold 0.85, margin 0.15
+Generated 2026-11-24T15:48:32.640Z · extractor **rules-v1 (offline baseline)** · embeddings **local-hash-v1** · filing threshold 0.85, margin 0.15
 
 60 labelled documents (15 per type) and 30 questions with known source pages. All data is synthetic. Regenerate with `npm run eval -- --extractor=rules`.
 

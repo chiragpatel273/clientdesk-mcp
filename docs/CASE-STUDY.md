@@ -61,8 +61,7 @@ price table, latency, escalations and errors, and never document text. The Usage
 and per filed document.
 
 **Try it safely.** "Try the demo" opens a read-only, partner-level session. Read-only is enforced on the server in
-two central places (the API router and the tool runner), so every write is refused with a 403 and logged, and new
-routes inherit the rule.
+two central places (the API router and the tool runner), so every write is refused and logged (up to a rate limit), and new routes inherit the rule.
 
 ## Measured, not claimed
 
@@ -110,12 +109,13 @@ TypeScript, MCP SDK (Streamable HTTP + stdio), Postgres + pgvector with row-leve
 queue (Neon; PGlite locally and in tests), Claude API
 (supported) and Groq gpt-oss (measured) with structured outputs, pdf.js, WorkOS AuthKit (OAuth with dynamic client registration),
 Amazon S3, React + Vite + Tailwind + shadcn/ui, Recharts, Vitest, Playwright, Render. Built with Claude Code, using project skills for adding
-tools and migrations, a security-review checklist, and an independent review by a second agent that found (before release)
-a way for a public visitor to disturb batch intake and a 100 KB file that froze the server; both fixed and tested.
+tools and migrations, a security-review checklist, and two independent reviews by other agents. The first found (before release) a way for a public visitor to disturb batch
+intake and a 100 KB file that froze the server; the second showed the freeze was only half fixed. Both are fixed, each
+with a test.
 
 ## Numbers that matter to a client
 
-- 205 automated tests and 15 Playwright end-to-end tests, including a denied-path test with an audit check for every
+- 220 automated tests and 15 Playwright end-to-end tests, including a denied-path test with an audit check for every
   tool and 21 cross-firm isolation tests.
 - Citation accuracy offline: 29 of 30 before v2's ranking changes, 30 of 30 after, on the same questions.
 - 0 wrong-client filings on the labelled set; 98.1% field accuracy; 10% sent to review.

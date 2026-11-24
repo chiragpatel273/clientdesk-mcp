@@ -191,12 +191,12 @@ describe('two firms in one database', () => {
 
     it('matches documents only against its own firm’s clients, even with the same client name', async () => {
       const nbDoc = (await getDocument(db.forFirm(NB), 'doc_inbox_northwind'))!;
-      const nbMatch = (await ensureMatch(db.forFirm(NB), services, nbDoc, { role: 'assistant' }))!;
+      const nbMatch = (await ensureMatch(db.forFirm(NB), services, nbDoc, { role: 'assistant' })).match!;
       expect(nbMatch.candidates.map((c) => c.clientId)).not.toContain('cl_hl_acme');
       expect(nbMatch.candidates[0]?.clientId).toBe('cl_acme');
 
       const hlDoc = (await getDocument(db.forFirm(HL), 'doc_hl_inbox_acme'))!;
-      const hlMatch = (await ensureMatch(db.forFirm(HL), services, hlDoc, { role: 'assistant' }))!;
+      const hlMatch = (await ensureMatch(db.forFirm(HL), services, hlDoc, { role: 'assistant' })).match!;
       expect(hlMatch.candidates.map((c) => c.clientId)).not.toContain('cl_acme');
       expect(hlMatch.candidates[0]?.clientId).toBe('cl_hl_acme');
     });

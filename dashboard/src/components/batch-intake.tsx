@@ -11,7 +11,7 @@ import {
   Upload,
 } from 'lucide-react';
 import { useRef, useState } from 'react';
-import { api, type JobItem, type JobStep } from '../api';
+import { api, isApiError, type JobItem, type JobStep } from '../api';
 import { contentTypeFor } from '../lib/files';
 import { formatRelative } from '../lib/format';
 import { cn } from '../lib/utils';
@@ -151,7 +151,9 @@ export function BatchIntakeCard() {
           setJobless((prev) => [...prev, { key: `${id}-${i}`, name: file.name, kind, message }]);
         try {
           // A retried request with the same key is answered with the first result, never processed twice.
-          const result = await api.uploadToBatch(id, file, contentTypeFor(file)!, `${id}-${i}`);
+          const send = () => api.uploadToBatch(id, file, contentTypeFor(file)!, `${id}-${i}`);
+          // A lost answer is asked for again, once: the server may well have the file already.
+          const result = await send().catch((e: unknown) => (isApiError(e, 0) ? send() : Promise.reject(e)));
           if (result.duplicate) skip('duplicate', 'Already in ClientDesk: this file was uploaded before.');
         } catch (e) {
           // One refused file must not stop the rest of the batch.
@@ -188,7 +190,8 @@ export function BatchIntakeCard() {
   const notUploaded = jobless.filter((f) => f.kind === 'failed').length;
   const duplicates = jobless.length - notUploaded;
   // A duplicate needs no work, so it counts as dealt with; a refused file doesn't.
-  const finished = items.filter((i) => i.status === 'done').length + duplicates;
+  const finished = items.filter((i) => i.status === 'done' || i.step === 'filed').length + duplicates;
+  const failedJobs = items.filter((i) => i.status === 'dead' && i.step !== 'filed').length;
 
   return (
     <Card>
@@ -233,6 +236,7 @@ export function BatchIntakeCard() {
           <>
             <p className="text-xs text-muted-foreground" aria-live="polite">
               {finished} of {batch.data.total} processed
+              {failedJobs > 0 && ` · ${failedJobs} failed`}
               {notUploaded > 0 && ` · ${notUploaded} not uploaded`}
               {finished === batch.data.total && <CircleCheck className="ml-1 inline size-3.5 text-ok" aria-hidden />}
             </p>

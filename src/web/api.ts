@@ -26,7 +26,7 @@ import {
 import { usageSummary } from '../domain/usage.js';
 import { findActorByEmail, findActorById } from '../domain/staff.js';
 import type { Actor } from '../domain/types.js';
-import { ensureMatch } from '../domain/intake.js';
+import { ensureMatch, isJudged } from '../domain/intake.js';
 import { canSeeDocument } from '../mcp/document-access.js';
 import { createBatch, findJobByKey, getBatch, getJob, listJobs, retryDead } from '../jobs/queue.js';
 import type { AppServices } from '../services.js';
@@ -319,7 +319,10 @@ export function createApiRouter(deps: Deps): Router {
       note: `Filed "${doc.title}" from the review queue (reason: ${doc.reviewReason ?? 'n/a'}).`,
       audit: { tool: 'dashboard:resolve_review', input, detail: `filed to ${input.clientId}` },
     });
-    if (!filed) return error(res, 409, 'The document changed; reload the queue');
+    if (!filed) {
+      await audit(req, 'dashboard:resolve_review', input, 'error', 'the document changed');
+      return error(res, 409, 'The document changed; reload the queue');
+    }
     await scoped(req, () => refreshPassages(db, services.embedder, doc.id), doc.id);
     return res.json({ ok: true });
   });
@@ -447,10 +450,14 @@ export function createApiRouter(deps: Deps): Router {
         await audit(req, 'dashboard:batch_upload', input, 'ok', `${result.id} job ${result.jobId}`);
         return res.json({ documentId: result.id, jobId: result.jobId, duplicate: false });
       } catch (err) {
-        if (err instanceof BatchFullError) return error(res, 409, 'This batch already has all its files');
-        // The same key with other bytes, at the same moment: the first request won.
-        const raced = key && isUniqueViolation(err) ? await findJobByKey(db, key) : null;
+        // The same key at the same moment: the first request won, and may have taken the batch's last place.
+        const full = err instanceof BatchFullError;
+        const raced = key && (full || isUniqueViolation(err)) ? await findJobByKey(db, key) : null;
         if (raced) return res.json({ documentId: raced.documentId, jobId: raced.id, duplicate: false });
+        if (full) {
+          await audit(req, 'dashboard:batch_upload', input, 'error', 'batch full');
+          return error(res, 409, 'This batch already has all its files');
+        }
         await audit(req, 'dashboard:batch_upload', input, 'error', errorCategory(err));
         return error(res, 400, 'Could not store that file');
       }
@@ -496,6 +503,8 @@ export function createApiRouter(deps: Deps): Router {
       return error(res, 404, 'No such batch');
     }
     const jobs = (await listJobs(db, { batchId, limit: 100 })).reverse();
+    // Someone is waiting for this batch: if it has work left (queued by another server, say), don't sleep through it.
+    if (jobs.some((j) => j.status === 'queued' || j.status === 'running')) deps.onJobQueued?.();
     return res.json({ ...batch, items: await jobView(db, jobs) });
   });
 
@@ -532,11 +541,16 @@ export function createApiRouter(deps: Deps): Router {
       await auditUnknownId(req, 'view_document', 'document', String(req.params.id));
       return error(res, 404, 'Not found');
     }
-    const match = await scoped(req, () => ensureMatch(db, services, doc, actor), doc.id);
-    const access = await canSeeDocument({ db, actor }, doc, match);
+    const judged = await scoped(req, () => ensureMatch(db, services, doc, actor), doc.id).catch((err: unknown) => err);
+    if (!isJudged(judged)) {
+      // Storage or the model is failing, so nobody can tell whose document this is: not shown, and said so.
+      await audit(req, 'dashboard:view_document', { documentId: doc.id }, 'error', errorCategory(judged));
+      return error(res, 503, 'This document can’t be checked right now. Try again in a few minutes.');
+    }
+    const access = await canSeeDocument({ db, actor }, judged.doc, judged.match);
     if (!access.allowed) {
       await audit(req, 'dashboard:view_document', { documentId: doc.id }, 'denied', access.detail);
-      return error(res, doc.status === 'processing' ? 409 : 403, access.reason);
+      return error(res, judged.doc.status === 'processing' ? 409 : 403, access.reason);
     }
     await audit(req, 'dashboard:view_document', { documentId: doc.id }, 'ok');
     return sendDocumentFile(res, services, doc);

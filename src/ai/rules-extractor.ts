@@ -28,7 +28,7 @@ const PATTERNS: Record<DocType, Record<string, Pattern[]>> = {
     due_date: [L('due date|payment due|due by')],
     billed_to: [L('bill(?:ed)? to|invoice to|customer|sold to')],
     total_amount: [L('total due|amount due|balance due|total \\(usd\\)|total')],
-    tax_amount: [L('sales tax(?: \\([^)]*\\))?|vat(?: \\([^)]*\\))?|tax(?: \\([^)]*\\))?')],
+    tax_amount: [L('sales tax(?: \\([^)\\n]{0,40}\\))?|vat(?: \\([^)\\n]{0,40}\\))?|tax(?: \\([^)\\n]{0,40}\\))?')],
     currency: [L('currency')],
   },
   bank_statement: {

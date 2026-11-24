@@ -18,7 +18,7 @@ import { recordAudit } from './domain/audit.js';
 import { getDocument } from './domain/documents.js';
 import { findActorByEmail, findActorById } from './domain/staff.js';
 import type { Actor } from './domain/types.js';
-import { ensureMatch } from './domain/intake.js';
+import { ensureMatch, isJudged } from './domain/intake.js';
 import { canSeeDocument } from './mcp/document-access.js';
 import { createMcpServer } from './mcp/server.js';
 import type { AppServices } from './services.js';
@@ -191,10 +191,22 @@ export function createHttpApp(deps: HttpDeps): Express {
       res.status(404).type('text/plain').send('Document not found.');
       return;
     }
-    const match = await usageScope({ db: firmDb, staffId: actor.staffId, source: 'mcp', documentId }, () =>
+    const judged = await usageScope({ db: firmDb, staffId: actor.staffId, source: 'mcp', documentId }, () =>
       ensureMatch(firmDb, services, doc, actor),
-    );
-    const access = await canSeeDocument({ db: firmDb, actor }, doc, match);
+    ).catch((err: unknown) => err);
+    if (!isJudged(judged)) {
+      await recordAudit(firmDb, {
+        staffId: actor.staffId,
+        tool: 'download_document',
+        input: { documentId },
+        outcome: 'error',
+        detail: errorCategory(judged),
+        durationMs: 0,
+      });
+      res.status(503).type('text/plain').send('This document can’t be checked right now. Try again in a few minutes.');
+      return;
+    }
+    const access = await canSeeDocument({ db: firmDb, actor }, judged.doc, judged.match);
     await recordAudit(firmDb, {
       staffId: actor.staffId,
       tool: 'download_document',
@@ -219,7 +231,8 @@ export function createHttpApp(deps: HttpDeps): Express {
     // time, or after a deploy a browser would ask for files that no longer exist (which are a 404, not the page).
     app.use(
       '/dashboard/assets',
-      express.static(join(dist, 'assets'), { index: false, immutable: true, maxAge: '365d', fallthrough: false }),
+      express.static(join(dist, 'assets'), { index: false, immutable: true, maxAge: '365d' }),
+      (_req, res) => void res.status(404).type('text/plain').send('Not found'),
     );
     const page = { headers: { 'cache-control': 'no-cache' }, cacheControl: false };
     app.use(
@@ -231,10 +244,6 @@ export function createHttpApp(deps: HttpDeps): Express {
   }
 
   app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
-    if ((err as { status?: unknown } | null)?.status === 404 && !res.headersSent) {
-      res.status(404).type('text/plain').send('Not found');
-      return;
-    }
     console.error('Request failed:', errorCategory(err));
     if (!res.headersSent) res.status(500).json({ error: 'Internal server error' });
   });

@@ -54,12 +54,19 @@ export function registerSendToReview(server: McpServer, ctx: ToolContext): void 
             const message = 'Filed documents can’t be sent to review.';
             return { outcome: 'ok', text: message, structured: { status: 'not_allowed', message } };
           }
-          if (!(await markForReview(ctx.db, { id: doc.id, reason: input.reason, staffId: ctx.actor.staffId }))) {
+          if (
+            !(await markForReview(ctx.db, {
+              id: doc.id,
+              reason: input.reason,
+              staffId: ctx.actor.staffId,
+              audit: { tool: 'send_to_review', input },
+            }))
+          ) {
             const message = 'The document changed while sending it to review. Check the inbox.';
             return { outcome: 'ok', text: message, structured: { status: 'not_allowed', message } };
           }
           const message = `Sent "${doc.title}" to the review queue: ${input.reason}`;
-          return { outcome: 'ok', text: message, structured: { status: 'sent', message } };
+          return { outcome: 'ok', text: message, structured: { status: 'sent', message }, audited: true };
         },
         { writes: true },
       ),

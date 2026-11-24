@@ -20,6 +20,8 @@ export interface ToolResult<T extends Record<string, unknown>> {
   structured: T;
   /** Optional note stored in the audit log (never shown to the model). */
   detail?: string;
+  /** The tool already wrote its audit row, in the same statement as its change. */
+  audited?: boolean;
 }
 
 /** The document a tool call is about, when it names one: model calls it makes are recorded against it. */
@@ -69,14 +71,16 @@ export async function runTool<T extends Record<string, unknown>>(
             },
             handler,
           );
-    await recordAudit(ctx.db, {
-      staffId: ctx.actor.staffId,
-      tool,
-      input,
-      outcome: result.outcome,
-      detail: result.detail,
-      durationMs: performance.now() - started,
-    });
+    if (!result.audited) {
+      await recordAudit(ctx.db, {
+        staffId: ctx.actor.staffId,
+        tool,
+        input,
+        outcome: result.outcome,
+        detail: result.detail,
+        durationMs: performance.now() - started,
+      });
+    }
     return {
       content: [{ type: 'text', text: result.text }],
       structuredContent: result.structured,

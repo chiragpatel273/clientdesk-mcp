@@ -181,7 +181,7 @@ describe('a document whose text was never read', () => {
     expect((await getJob(nb(db), jobId!))?.lastError).toBe('S3 download failed (503)');
 
     // Storage still down: nothing can be read, so nothing is shown.
-    expect((await web.api(`/api/documents/${id}/file`, TOM)).status).toBeGreaterThanOrEqual(403);
+    expect((await web.api(`/api/documents/${id}/file`, TOM)).status).toBe(503);
     expect((await tom.callTool({ name: 'extract_document', arguments: { documentId: id } })).isError).toBe(true);
     broken = false;
     // Storage back: opening it reads it first, and it turns out to belong to another team.

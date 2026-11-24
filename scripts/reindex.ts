@@ -15,7 +15,11 @@ const db = await createDb(config.databaseUrl);
 try {
   await migrate(db);
   for (const { id } of await db.query<{ id: string }>('select id from firms order by id')) {
-    const n = await reindexStale(db.forFirm(id), embedder, { all: process.argv.includes('--all'), log: console.log });
+    const n = await reindexStale(db.forFirm(id), embedder, {
+      all: process.argv.includes('--all'),
+      log: console.log,
+      onFailure: () => (process.exitCode = 1),
+    });
     console.log(`${id}: rebuilt passages for ${n} documents with ${embedder.model}.`);
   }
 } finally {

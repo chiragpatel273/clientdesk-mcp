@@ -112,6 +112,7 @@ export function registerFileDocument(server: McpServer, ctx: ToolContext): void 
 
           const taxYear = input.taxYear ?? inferTaxYear(extraction);
           const docType = extraction.docType;
+          const title = titleForFiling(doc, extraction);
           if (
             !(await markFiled(ctx.db, {
               id: doc.id,
@@ -119,33 +120,38 @@ export function registerFileDocument(server: McpServer, ctx: ToolContext): void 
               taxYear,
               docType,
               staffId: ctx.actor.staffId,
-              title: titleForFiling(doc, extraction),
+              title,
+              audit: { tool: 'file_document', input, detail: `filed to ${best.clientId} at ${best.confidence}` },
             }))
           ) {
             const message = 'The document changed while filing (someone else may have processed it). Check the inbox.';
             return { outcome: 'ok', text: message, structured: { status: 'refused', message } };
           }
           await refreshPassages(ctx.db, ctx.services.embedder, doc.id);
-          const filed = (await getDocument(ctx.db, doc.id))!;
+          // Filed and audited: whatever happens to the open item can't undo that or be reported as a failed filing.
           const openItemClosed = input.openItemId
-            ? await closeOpenItem(ctx.db, { id: input.openItemId, clientId: best.clientId, documentId: doc.id })
+            ? await closeOpenItem(ctx.db, {
+                id: input.openItemId,
+                clientId: best.clientId,
+                documentId: doc.id,
+              }).catch(() => null)
             : null;
           if (input.openItemId && !openItemClosed) {
-            // Filing was right; the open item id wasn't. Logged on its own, so a made-up id doesn't hide behind an `ok`.
+            // Logged on its own, so a made-up id doesn't hide behind an `ok`.
             await noteCrossFirm(ctx.db, ctx.actor, 'file_document', 'open_item', input.openItemId);
             await recordAudit(ctx.db, {
               staffId: ctx.actor.staffId,
               tool: 'file_document:open_item',
               input: { openItemId: input.openItemId },
               outcome: 'denied',
-              detail: 'not an open item of this client',
+              detail: 'not closed: not an open item of this client, or it could not be changed',
               durationMs: 0,
             });
           }
 
           const link = ctx.services.links.url(doc.id, ctx.actor.staffId);
           const message =
-            `Filed "${filed.title}" under ${best.name} as ${docType}${taxYear ? ` for ${taxYear}` : ''}.` +
+            `Filed "${title}" under ${best.name} as ${docType}${taxYear ? ` for ${taxYear}` : ''}.` +
             (input.openItemId
               ? openItemClosed
                 ? ` Closed open item: ${openItemClosed.description}.`
@@ -159,7 +165,7 @@ export function registerFileDocument(server: McpServer, ctx: ToolContext): void 
               message,
               document: {
                 id: doc.id,
-                title: filed.title,
+                title,
                 clientId: best.clientId,
                 clientName: best.name,
                 taxYear,
@@ -168,7 +174,7 @@ export function registerFileDocument(server: McpServer, ctx: ToolContext): void 
               },
               openItemClosed,
             },
-            detail: `filed to ${best.clientId} at ${best.confidence}`,
+            audited: true,
           };
         },
         { writes: true },

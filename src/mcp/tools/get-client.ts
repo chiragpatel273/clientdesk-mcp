@@ -93,7 +93,7 @@ export function registerGetClient(server: McpServer, ctx: ToolContext): void {
     },
     async ({ client: query }) =>
       runTool<Output>(ctx, 'get_client', { client: query }, async () => {
-        const matches = await findClients(ctx.db, query);
+        const matches = await findClients(ctx.db, query, ctx.actor);
         if (matches.length === 0) {
           return {
             ...(await notFoundAudit(ctx, 'get_client', 'client', query)),

@@ -84,9 +84,19 @@ export async function ensureMatch(
   services: Pick<AppServices, 'extractor' | 'files' | 'filing'>,
   doc: DocumentRecord,
   actor: Pick<Actor, 'role'>,
-): Promise<MatchResult | null> {
-  if (doc.status === 'filed' || doc.status === 'processing' || actor.role === 'partner') return doc.match;
-  if (doc.match) return doc.match;
+): Promise<{ doc: DocumentRecord; match: MatchResult | null }> {
+  if (doc.status === 'filed' || doc.status === 'processing' || actor.role === 'partner')
+    return { doc, match: doc.match };
+  if (doc.match && doc.textRead) return { doc, match: doc.match };
   const read = await ensureText(db, services, doc);
-  return computeMatch(db, services, read, await ensureExtraction(db, services, read));
+  const extraction = await ensureExtraction(db, services, read);
+  // Extraction can take a while: judge the document as it is now, not as it was when it was asked for.
+  const now = await getDocument(db, doc.id);
+  if (!now) throw new Error('The document is gone');
+  if (now.status === 'filed' || now.status === 'processing') return { doc: now, match: now.match };
+  return { doc: now, match: await computeMatch(db, services, now, extraction) };
 }
+
+/** Did `ensureMatch` answer (rather than fail with the error it was caught as)? */
+export const isJudged = (value: unknown): value is Awaited<ReturnType<typeof ensureMatch>> =>
+  typeof value === 'object' && value !== null && 'doc' in value && 'match' in value;

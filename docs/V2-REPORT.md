@@ -121,7 +121,7 @@ all three 100% / 98.6%. No asked question got worse; one wider question did (eng
 0.0484). Extraction is unchanged in v2, so field accuracy and review rate only move with a model run. The Groq column
 needs a rerun to show v2's search changes.
 
-Tests: 104 before v2; now 205 vitest tests and 15 Playwright tests.
+Tests: 104 before v2; now 220 vitest tests and 15 Playwright tests.
 
 ## Decisions made on your behalf
 
@@ -184,14 +184,14 @@ The first version of this report got these wrong:
 ## Security review (2026-11-24)
 
 An independent reviewer (a second agent, given the code and not the conclusions) reviewed all phases and proved most findings
-by running them. Fixed, each with a test unless noted:
+by running them. Fixed; each has a test except the ones marked, the heartbeat and request timeouts:
 
 | Finding                                                                                                        | Fix                                                                                                |
 | -------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
 | A demo visitor opening a document mid-batch spoiled its extraction                                             | Nobody can open, extract or match a document being processed; late results are discarded           |
 | Demo visitors could cause unlimited model calls by opening a file                                              | Viewing never extracts for partners or the demo; one extraction at a time per document             |
 | After a job died before reading the text, an assistant could read another team's document                      | Unread text is read before any access decision; until then only partners see it                    |
-| One 100 KB line of digits froze the server for 22 s                                                            | Linear patterns, cut lines, limits on pages and text                                               |
+| One 100 KB line of digits froze the server for 22 s                                                            | Bounded patterns, cut lines, limits on pages and text (completed in the second review)             |
 | A crash or failing embedding service left filed documents with no note, no audit row or a dead job             | Document, note, audit row and job state in one statement; passages rebuilt separately and repaired |
 | Two loops of one worker could both record the same job                                                         | Locks per claim, heartbeat, request timeouts                                                       |
 | Documents stuck in `processing` (storing, dead-lettering, retrying); batch limit and keys raced                | One statement each; batch places taken atomically                                                  |
@@ -208,6 +208,30 @@ by running them. Fixed, each with a test unless noted:
 Not changed: `/api/accuracy` shows the (synthetic, public) eval report to any signed-in user; injected SQL could leave the app
 role (there is none: all SQL is parameterised); usage counts a model's refusal as a success; Render's proxy hop count for
 `TRUST_PROXY=1` is unconfirmed.
+
+## Second security review (2026-11-24)
+
+Another agent, new to the code, tried to break the fixes above. The job queue (103 injected faults, no duplicate or orphan), the
+migration on two kinds of existing database, and the protection of hidden clients held. These did not, and are now fixed, each
+with a test that failed first unless marked:
+
+- The freeze was only half fixed: a 98 KB PDF with 40,000 lines still took 22 s, and an unclosed bracket after "tax (" 36 s.
+- The first person allowed to open an unread document was refused; a failing storage or model gave a 500 with no audit row
+  (now 503, audited); a model provider's 404 was shown as "not found".
+- A job could wait up to 10 minutes if it arrived as the worker went to sleep, or was queued by another server.
+- A slow rebuild of search passages could overwrite a newer one.
+- A full batch still stored the refused file; the same upload sent twice for a batch's last place got one refusal.
+- Filing through Claude could be logged as an error after it had succeeded.
+- A filed document's last step failed if the uploader had lost their role.
+- An extraction finishing after the document was filed to a hidden client showed its contents.
+- A single upload was answered "could not read that file" when only the embedding service was down.
+- Amounts after a comma were no longer recognised; an assistant's own client could be cut off by the 10-result limit.
+- Start-up waited for the embedding service; retries all came at once (no test). The batch summary left out failed jobs, and a lost
+  answer counted a file twice (no test).
+
+Still open: two uploads racing for a batch's last place can leave an unused stored file (the storage key may not delete). A hung
+file-storage request has no timeout of its own (the job gives up after 30 minutes). Nobody has reviewed this second round of fixes
+independently. If `TRUST_PROXY=1` is the wrong number of hops on Render, all demo visitors share one rate limit: check it first.
 
 ## Your steps
 
@@ -254,7 +278,7 @@ ANTHROPIC_API_KEY= GROQ_API_KEY= VOYAGE_API_KEY= npx tsx src/main.ts     # http:
 - **Usage:** after a batch, the Usage page (partners only) shows calls per day, per model and per source.
 - **Multiple firms:** user picker → "Lena Ortiz · Partner · Harbourline Tax Partners": the header, inbox, audit log and
   usage all switch to Harbourline; Northbridge's documents are invisible, even by id.
-- **Tests:** `npm run check` (205 tests), `npx playwright test` (15 tests, about a minute).
+- **Tests:** `npm run check` (220 tests), `npx playwright test` (15 tests, about a minute).
 
 ## Resume bullets (v2, real numbers)
 
@@ -269,7 +293,7 @@ the branch is pushed.
   escalations) behind a usage dashboard.
 - Hardened it through an independent security review: closed a public-visitor path that could disturb background jobs and
   trigger paid model calls, made job state transitions atomic, and removed a denial-of-service in text processing; grew
-  the suite from 104 to 205 tests plus 15 Playwright end-to-end tests.
+  the suite from 104 to 220 tests plus 15 Playwright end-to-end tests.
 - Improved RAG citation ranking (offline eval: 29 → 30 of 30 questions cited to the right page) and published the method,
   the misses and an ablation of each change.
 

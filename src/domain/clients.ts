@@ -1,4 +1,5 @@
 import { firmOf, type Db } from '../db/index.js';
+import type { Actor } from './types.js';
 
 export interface ClientRef {
   id: string;
@@ -31,7 +32,7 @@ export interface ClientDetail {
  * Finds clients matching an id or a name. Exact id or exact name wins outright;
  * otherwise every name containing the text is returned, so "Acme" can be ambiguous on purpose.
  */
-export async function findClients(db: Db, query: string): Promise<ClientRef[]> {
+export async function findClients(db: Db, query: string, actor: Pick<Actor, 'staffId' | 'role'>): Promise<ClientRef[]> {
   const q = query.trim();
   if (!q) return [];
   const exact = await db.query<{ id: string; name: string }>(
@@ -40,10 +41,12 @@ export async function findClients(db: Db, query: string): Promise<ClientRef[]> {
   );
   if (exact.length > 0) return exact;
   return db.query<{ id: string; name: string }>(
-    `select id, name from clients
+    // The caller's own clients first, or the limit could fill up with ones they can't see.
+    `select id, name from clients c
      where firm_id = $2 and position(lower($1) in lower(name)) > 0
-     order by name limit 10`,
-    [q, firmOf(db)],
+     order by ($3::text is null or exists (select 1 from client_assignments a
+                where a.client_id = c.id and a.firm_id = $2 and a.staff_id = $3)) desc, name limit 10`,
+    [q, firmOf(db), actor.role === 'partner' ? null : actor.staffId],
   );
 }
 

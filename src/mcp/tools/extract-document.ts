@@ -66,18 +66,20 @@ export function registerExtractDocument(server: McpServer, ctx: ToolContext): vo
             }
           }
 
-          const doc = await ensureText(ctx.db, ctx.services, found);
-          const extraction = await ensureExtraction(ctx.db, ctx.services, doc, input.refresh);
-          if (doc.status !== 'filed') {
-            const access = await canSeeDocument(ctx, doc, await computeMatch(ctx.db, ctx.services, doc, extraction));
-            if (!access.allowed) {
-              return {
-                outcome: 'denied',
-                text: access.reason,
-                structured: { status: 'denied', message: access.reason },
-                detail: access.detail,
-              };
-            }
+          const read = await ensureText(ctx.db, ctx.services, found);
+          const extraction = await ensureExtraction(ctx.db, ctx.services, read, input.refresh);
+          // Extraction can take a while: judge the document as it is now, not as it was when it was asked for.
+          const doc = (await getDocument(ctx.db, read.id)) ?? read;
+          const settled = doc.status === 'filed' || doc.status === 'processing';
+          const match = settled ? null : await computeMatch(ctx.db, ctx.services, doc, extraction);
+          const access = await canSeeDocument(ctx, doc, match);
+          if (!access.allowed) {
+            return {
+              outcome: 'denied',
+              text: access.reason,
+              structured: { status: 'denied', message: access.reason },
+              detail: access.detail,
+            };
           }
 
           const low = extraction.fields.filter((f) => f.confidence < LOW).map((f) => f.name);

@@ -50,7 +50,7 @@ export async function resolveClient(
   tool: string,
   query: string,
 ): Promise<{ client: ClientRef } | { refusal: ClientRefusal }> {
-  const matches = await findClients(ctx.db, query);
+  const matches = await findClients(ctx.db, query, ctx.actor);
   if (matches.length === 0) {
     const message = `No client matches "${query}".`;
     const audit = await notFoundAudit(ctx, tool, 'client', query);

@@ -18,17 +18,26 @@ export async function openDatabase(
   const ran = await migrate(db);
   if (ran.length) log(`Applied migrations: ${ran.join(', ')}`);
   if (config.seedDemo) await seedDemo(db, log, services);
-  // Embedding demo documents and rebuilding passages are model calls too: recorded as start-up work, per firm.
-  const firms = await db.query<{ id: string }>('select id from firms order by id');
-  for (const { id } of firms) {
+  return db;
+}
+
+/**
+ * Rebuilds stale search passages, firm by firm (model calls, recorded as start-up work). Run after the server is listening:
+ * with many documents, or an embedding service that is down, it can take a while and nothing depends on it.
+ */
+export async function rebuildPassages(
+  db: Db,
+  log: (msg: string) => void,
+  services: Pick<AppServices, 'embedder'>,
+): Promise<void> {
+  for (const { id } of await db.query<{ id: string }>('select id from firms order by id')) {
     const firmDb = db.forFirm(id);
-    const reindexed = await usageScope({ db: firmDb, source: 'startup' }, () =>
+    const rebuilt = await usageScope({ db: firmDb, source: 'startup' }, () =>
       reindexStale(firmDb, services.embedder, { log }),
     );
-    if (reindexed)
-      log(`Rebuilt search passages for ${reindexed} ${id} documents (embeddings: ${services.embedder.model}).`);
+    if (rebuilt)
+      log(`Rebuilt search passages for ${rebuilt} ${id} documents (embeddings: ${services.embedder.model}).`);
   }
-  return db;
 }
 
 /**

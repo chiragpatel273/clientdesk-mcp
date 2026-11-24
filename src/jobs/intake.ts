@@ -51,14 +51,15 @@ async function uploader(db: Db, job: Job): Promise<Actor> {
  * one statement with the job's state: it happens once or not at all.
  */
 export async function runIntakeStep(db: Db, services: AppServices, job: Job): Promise<StepResult> {
-  const actor = await uploader(db, job);
   const doc = await getDocument(db, job.documentId);
   if (!doc) throw new PermanentJobError('The document no longer exists.');
   if (job.step === 'filed') {
-    // Already filed: rebuild its search passages with the client and title it has now.
+    // Already filed, by a partner who was allowed to: only its search passages are rebuilt, with the client and title it has
+    // now. That is housekeeping, whoever the uploader is by now.
     await reindexDocument(db, services.embedder, doc.id);
     return { step: 'filed', done: true, detail: services.embedder.model, auditAs: 'reindexed' };
   }
+  const actor = await uploader(db, job);
   if (doc.status !== 'processing')
     throw new PermanentJobError(`The document is no longer being processed (${doc.status}).`);
 

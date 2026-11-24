@@ -45,6 +45,8 @@ export function createWorker(deps: WorkerDeps): Worker {
   let running = false;
   let loops: Promise<void>[] = [];
   const sleepers = new Set<() => void>();
+  // Counts wake-ups, so one that arrives while a loop is between its last look and its sleep is not lost.
+  let wakes = 0;
 
   async function handleFailure(job: Job, error: unknown): Promise<void> {
     // Only the kind of error is kept: provider and storage messages can hold host names or the model's partial answer.
@@ -98,6 +100,7 @@ export function createWorker(deps: WorkerDeps): Worker {
     while (running) {
       let worked = false;
       let pause = idleMs;
+      const seen = wakes;
       try {
         worked = await tick();
         if (!worked) pause = Math.min(idleMs, (await nextDueMs(db, config)) ?? idleMs);
@@ -106,7 +109,7 @@ export function createWorker(deps: WorkerDeps): Worker {
         // The database itself failed (connection lost): wait and try again rather than crash the server.
         log(`Worker ${id} could not reach the job queue: ${errorCategory(error)}`);
       }
-      if (!worked && running) {
+      if (!worked && running && wakes === seen) {
         await new Promise<void>((resolve) => {
           const wake = () => {
             clearTimeout(timer);
@@ -135,6 +138,7 @@ export function createWorker(deps: WorkerDeps): Worker {
       log(`Job worker ${id} started (${config.concurrency} at a time).`);
     },
     wake() {
+      wakes++;
       for (const wake of [...sleepers]) wake();
     },
     async stop() {
