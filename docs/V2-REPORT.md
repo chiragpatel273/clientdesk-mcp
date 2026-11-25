@@ -157,6 +157,9 @@ second look:
 
 Nothing in the spec was skipped. Not verifiable from here:
 
+- **Deployed 2026-11-25** (PR #9, `main` at `85d3fb0`): the migrations ran on Neon, the site came up, a client lookup and the inbox
+  list through the live connector returned v1's data, and the owner tried the demo. Not tried on the live site yet: search, batch
+  intake and the signed-in dashboard. The rest of this section was written before the deploy.
 - **Migrations 007 and 008 on Neon.** They run on PGlite and on a real Postgres 18 (2026-11-24, below), as a non-superuser owner
   that may create roles. They have not run on Neon, and whether Neon's owner role may create roles is not confirmed here. If it may
   not, 007 fails ("permission denied to create role") and changes nothing; 003 to 006 stay applied.
@@ -250,17 +253,17 @@ A temporary local Postgres 18, owned by a role without superuser rights, deleted
 
 ## Your steps
 
-1. **Review and merge.** `git log main..v2` is the six phase commits, the docs commit and the corrections. Push the branch and open a
-   PR as usual; CI now has four jobs: check, eval (offline), e2e (Playwright) and the manual Claude eval.
+1. **Review and merge.** Done: PR #9, merged 2026-11-25, CI green (check, eval, e2e; the manual Claude eval was not run). The e2e
+   job needed Ubuntu 24.04: Playwright 1.58 can't install Chromium on 26.04.
 2. **Render settings** (Environment):
-   - `DEMO_LOGIN=true` and `TRUST_PROXY=1` (both in `render.yaml`; add them by hand if the service isn't synced from
-     the blueprint).
+   - `DEMO_LOGIN` is on. Confirm `TRUST_PROXY=1` (in `render.yaml`; add it by hand if the service isn't synced from the
+     blueprint).
    - Nothing else is required. Optional: `WORKER_CONCURRENCY` (default 2), `JOB_MAX_ATTEMPTS` (5),
      `JOB_BACKOFF_MS` (2000), `JOB_STUCK_SECONDS` (300). `WORKER=1` is the default.
 3. **What happens on deploy** (automatic, in Render's logs): migrations `003_demo_visitor` through `008_hardening` apply
    in order; existing rows are backfilled to Northbridge; "Added the read-only demo visitor."; "Seeded the Harbourline
    Tax Partners demo firm." and "Loaded 2 Harbourline Tax Partners demo documents."; "Rebuilt search passages for
-   N firm_northbridge documents". Before deploying, Neon's point-in-time restore (or a branch) is your rollback.
+   N firm_northbridge documents". No backup branch was made before this deploy.
 4. **Check the live site:** open `/dashboard` in a private window → **Try the demo** → every page loads; try an upload
    and see the refusal, then the `dashboard:upload` / Denied row in the audit log. Sign in as Maya → Inbox → Batch
    intake with two or three demo PDFs → Usage page.
@@ -297,8 +300,7 @@ ANTHROPIC_API_KEY= GROQ_API_KEY= VOYAGE_API_KEY= npx tsx src/main.ts     # http:
 
 ## Resume bullets (v2, real numbers)
 
-Accurate for the branch as built; claim "live" for the v2 features only once it is deployed, and the CI runs only once
-the branch is pushed.
+v2 is deployed and its CI (check, eval, e2e) has run; search and batch intake have not been tried on the live site yet.
 
 - Re-architected a live Claude/MCP document-intake app (TypeScript, Postgres) for multi-tenancy: `firm_id`
   isolation enforced twice, in the domain layer and with Postgres row-level security plus same-firm foreign keys,
