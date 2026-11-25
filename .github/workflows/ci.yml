@@ -47,7 +47,8 @@ jobs:
   # End-to-end: Chromium against the real server (AUTH_MODE=dev, in-memory database, offline AI). Traces and
   # screenshots of failures are uploaded.
   e2e:
-    runs-on: ubuntu-latest
+    # Not ubuntu-latest (26.04): Playwright 1.58 can't install Chromium there.
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
