@@ -1,12 +1,14 @@
 /**
- * `npm run eval`: measures extraction, client matching and search against the labelled set in eval/dataset.ts
- * and writes eval/report.json (read by the dashboard) and eval/report.md.
+ * `npm run eval`: measures extraction, client matching and search against the labelled set in eval/dataset.ts.
+ * A model run (Claude, Groq) writes eval/report.json + .md: the published report the dashboard shows first. The
+ * offline rules run (CI, every push) writes eval/baseline.json + .md, so it never overwrites a model run.
  *
  *   npm run eval                     # extractor from config: Claude if ANTHROPIC_API_KEY is set, else rules
  *   npm run eval -- --extractor=rules
  *   npm run eval -- --extractor=claude
  *   npm run eval -- --extractor=groq
  *   npm run eval -- --check          # exit 1 if any document was filed to the wrong client (CI)
+ *   npm run eval -- --out=eval/x     # write eval/x.json and eval/x.md instead
  */
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -16,16 +18,17 @@ import { createEmbedder } from '../src/ai/embeddings.js';
 import { FIELDS, sameValue, type Extraction, type Extractor } from '../src/ai/extraction.js';
 import { loadConfig, loadDotEnv, type ExtractorName } from '../src/config.js';
 import { createExtractor } from '../src/services.js';
+import { usageScope, type LlmCall } from '../src/ai/usage.js';
 import { createDb } from '../src/db/index.js';
 import { migrate, projectRoot } from '../src/db/migrate.js';
 import { CLIENTS, CONTACTS } from '../src/demo/firm.js';
-import { seedDemoFirm } from '../src/demo/seed.js';
+import { ensureFirms, NORTHBRIDGE, seedDemoFirm } from '../src/demo/seed.js';
 import { renderTextPdf } from '../src/documents/pdf-render.js';
 import { describeDocument, ingestDocument } from '../src/domain/documents.js';
 import { matchClients } from '../src/domain/matching.js';
 import { searchDocuments } from '../src/domain/search.js';
 import { memoryFileStore } from '../src/storage/files.js';
-import { DOCUMENTS, QUESTIONS, type EvalDocument } from '../eval/dataset.js';
+import { DOCUMENTS, eligible, QUESTIONS, questionFor, type EvalDocument } from '../eval/dataset.js';
 
 const args = new Map(
   process.argv.slice(2).map((a) => {
@@ -129,47 +132,77 @@ async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promis
 console.error(`Extracting ${DOCUMENTS.length} documents with ${extractorName}...`);
 // Groq's free tier allows ~8K tokens a minute, so one document at a time (the extractor waits out 429s).
 const concurrency = { claude: 4, groq: 1, rules: 8 }[extractorName];
-const cases = await mapLimit(DOCUMENTS, concurrency, runCase);
+// Every model call the run makes (extraction and embeddings) is totalled into the report's `usage`, which the
+// dashboard's Usage page shows: the eval runs in its own process with its own database.
+const calls: (LlmCall & { costUsd: number })[] = [];
+const collect = { source: 'script' as const, listener: (call: LlmCall & { costUsd: number }) => calls.push(call) };
+const cases = await usageScope(collect, () => mapLimit(DOCUMENTS, concurrency, runCase));
 if (remote) process.stderr.write('\n');
 
 // ---------- search ----------
 
-console.error(`Indexing for search with ${embedder.model}...`);
-const db = await createDb('pglite://memory');
-await migrate(db);
-await seedDemoFirm(db);
-const files = memoryFileStore();
-for (const doc of DOCUMENTS) {
-  if (!doc.clientId) continue;
-  await ingestDocument(
-    db,
-    { files, embedder },
-    {
-      id: doc.id,
-      bytes: await renderTextPdf(doc.id, doc.pages),
-      mimeType: 'application/pdf',
-      filename: `${doc.id}.pdf`,
-      // As file_document would: a title from this run's extraction, falling back to a neutral one.
-      title: describeDocument(cases.find((c) => c.doc.id === doc.id)!.extraction) ?? `Document ${doc.id}`,
-      uploadedBy: null,
-      filed: { clientId: doc.clientId, taxYear: doc.taxYear, docType: doc.docType, staffId: null },
-    },
-  );
-}
-const searches = [];
-for (const q of QUESTIONS) {
-  const passages = await searchDocuments(db, embedder, q.question, { allowedClientIds: 'all', limit: 5 });
-  const rank = passages.findIndex((p) => p.documentId === q.documentId);
-  const top = passages[0];
-  searches.push({
-    question: q,
-    hit: rank >= 0,
-    rank: rank >= 0 ? rank + 1 : null,
-    citedCorrectly: top?.documentId === q.documentId && top.page === q.page,
-    top: top ? `${top.documentId} p.${top.page}` : 'none',
-  });
-}
-await db.close();
+const { searches, wide } = await usageScope(collect, async () => {
+  console.error(`Indexing for search with ${embedder.model}...`);
+  const store = await createDb('pglite://memory');
+  await migrate(store);
+  await ensureFirms(store);
+  // The eval measures Northbridge's search: every query runs scoped to that firm, as in production.
+  const db = store.forFirm(NORTHBRIDGE.id);
+  await seedDemoFirm(db);
+  const files = memoryFileStore();
+  for (const doc of DOCUMENTS) {
+    if (!doc.clientId) continue;
+    await ingestDocument(
+      db,
+      { files, embedder },
+      {
+        id: doc.id,
+        bytes: await renderTextPdf(doc.id, doc.pages),
+        mimeType: 'application/pdf',
+        filename: `${doc.id}.pdf`,
+        // As file_document would: a title from this run's extraction, falling back to a neutral one.
+        title: describeDocument(cases.find((c) => c.doc.id === doc.id)!.extraction) ?? `Document ${doc.id}`,
+        // As a filed document carries it: the passages' context lines use it.
+        extraction: cases.find((c) => c.doc.id === doc.id)!.extraction,
+        uploadedBy: null,
+        filed: { clientId: doc.clientId, taxYear: doc.taxYear, docType: doc.docType, staffId: null },
+      },
+    );
+  }
+  const searches = [];
+  for (const q of QUESTIONS) {
+    const passages = await searchDocuments(db, embedder, q.question, { allowedClientIds: 'all', limit: 5 });
+    const rank = passages.findIndex((p) => p.documentId === q.documentId);
+    const top = passages[0];
+    searches.push({
+      question: q,
+      hit: rank >= 0,
+      rank: rank >= 0 ? rank + 1 : null,
+      citedCorrectly: top?.documentId === q.documentId && top.page === q.page,
+      top: top ? `${top.documentId} p.${top.page}` : 'none',
+    });
+  }
+
+  // Wider check, not a target: both question variants (plain and paraphrased) for every searchable document. It includes
+  // the 30 asked questions and was looked at while tuning: breadth, not an independent test.
+  const wide = [];
+  for (const doc of eligible) {
+    for (const paraphrased of [false, true]) {
+      const q = questionFor(doc, paraphrased);
+      const passages = await searchDocuments(db, embedder, q.question, { allowedClientIds: 'all', limit: 5 });
+      const top = passages[0];
+      wide.push({
+        id: `${doc.id}${paraphrased ? ' (paraphrased)' : ''}`,
+        hit: passages.some((p) => p.documentId === q.documentId),
+        citedCorrectly: top?.documentId === q.documentId && top.page === q.page,
+        expected: `${q.documentId} p.${q.page}`,
+        top: top ? `${top.documentId} p.${top.page}` : 'none',
+      });
+    }
+  }
+  await store.close();
+  return { searches, wide };
+});
 
 // ---------- metrics ----------
 
@@ -255,8 +288,55 @@ const report = {
     citedCorrectly: s.citedCorrectly,
     top: s.top,
   })),
+  usage: summarizeUsage(calls),
+  robustness: {
+    questions: wide.length,
+    hitRate: ratio(wide.filter((w) => w.hit).length, wide.length),
+    citationAccuracy: ratio(wide.filter((w) => w.citedCorrectly).length, wide.length),
+    misses: wide.filter((w) => !w.citedCorrectly).map((w) => `${w.id}: expected ${w.expected}, top result ${w.top}`),
+  },
   changes,
 };
+
+function summarizeUsage(all: (LlmCall & { costUsd: number })[]) {
+  type Row = {
+    operation: string;
+    model: string;
+    calls: number;
+    inputTokens: number;
+    outputTokens: number;
+    costUsd: number;
+    estimated: boolean;
+  };
+  const byModel = new Map<string, Row>();
+  for (const c of all) {
+    const key = `${c.operation}|${c.model}`;
+    const m = byModel.get(key) ?? {
+      operation: c.operation,
+      model: c.model,
+      calls: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      costUsd: 0,
+      estimated: false,
+    };
+    m.calls++;
+    m.inputTokens += c.inputTokens;
+    m.outputTokens += c.outputTokens;
+    m.costUsd += c.costUsd;
+    m.estimated ||= c.tokensEstimated ?? false;
+    byModel.set(key, m);
+  }
+  return {
+    calls: all.length,
+    inputTokens: all.reduce((n, c) => n + c.inputTokens, 0),
+    outputTokens: all.reduce((n, c) => n + c.outputTokens, 0),
+    costUsd: Number(all.reduce((n, c) => n + c.costUsd, 0).toFixed(6)),
+    escalated: all.filter((c) => c.escalated).length,
+    errors: all.filter((c) => !c.success).length,
+    byModel: [...byModel.values()],
+  };
+}
 
 // ---------- write ----------
 
@@ -271,7 +351,7 @@ const md = [
     `filing threshold ${config.filing.threshold}, margin ${config.filing.margin}`,
   '',
   `${DOCUMENTS.length} labelled documents (15 per type) and ${QUESTIONS.length} questions with known source pages. ` +
-    'All data is synthetic. Regenerate with `npm run eval`.',
+    `All data is synthetic. Regenerate with \`npm run eval${remote ? ` -- --extractor=${extractorName}` : ' -- --extractor=rules'}\`.`,
   '',
   '| Metric | Result | Target | |',
   '| --- | --- | --- | --- |',
@@ -309,6 +389,22 @@ const md = [
         )
     : ['None.']),
   '',
+  '## Model usage',
+  '',
+  `${report.usage.calls} model calls, ${report.usage.inputTokens.toLocaleString('en-US')} input and ` +
+    `${report.usage.outputTokens.toLocaleString('en-US')} output tokens, estimated cost $${report.usage.costUsd.toFixed(4)}` +
+    `${report.usage.escalated ? `, ${report.usage.escalated} escalations to the larger model` : ''}` +
+    `${report.usage.errors ? `, ${report.usage.errors} failed calls` : ''}.` +
+    (remote ? '' : ' Offline models: token counts are estimates (characters / 4), cost 0.'),
+  '',
+  '## Wider check (not a target)',
+  '',
+  `Both question variants for every searchable document: ${report.robustness.questions} questions, ` +
+    `hit rate ${pct(report.robustness.hitRate)}, citation accuracy ${pct(report.robustness.citationAccuracy)}. ` +
+    'It includes the 30 asked questions and was looked at while tuning, so it shows breadth but is not an independent test.',
+  '',
+  ...(report.robustness.misses.length ? report.robustness.misses.map((m) => `- ${m}`) : ['- No misses.']),
+  '',
   '## What was changed to improve these numbers',
   '',
   ...(changes.length ? changes.map((c) => `- ${c}`) : ['- Nothing yet.']),
@@ -329,10 +425,11 @@ const md = [
   '',
 ].join('\n');
 
-await writeFile(join(root, 'eval', 'report.json'), `${JSON.stringify(report, null, 2)}\n`);
-await writeFile(join(root, 'eval', 'report.md'), md);
+const out = args.get('out') ?? (remote ? 'eval/report' : 'eval/baseline');
+await writeFile(join(root, `${out}.json`), `${JSON.stringify(report, null, 2)}\n`);
+await writeFile(join(root, `${out}.md`), md);
 console.log(md.split('\n## By document type')[0]);
-console.log('\nWrote eval/report.md and eval/report.json');
+console.log(`\nWrote ${out}.md and ${out}.json`);
 
 if (args.has('check') && wrongClient > 0) {
   console.error(`FAIL: ${wrongClient} document(s) would be filed to the wrong client.`);

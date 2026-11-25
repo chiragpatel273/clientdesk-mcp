@@ -8,3 +8,6 @@ dashboard/dist
 .git
 coverage
 *.log
+test-results
+playwright-report
+blob-report

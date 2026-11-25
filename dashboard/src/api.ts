@@ -16,13 +16,23 @@ export interface Me {
   name: string;
   email: string;
   role: Role;
+  /** The "Try the demo" visitor: the server refuses every change. */
+  readOnly: boolean;
+  /** The staff member's firm: everything they see belongs to it. */
+  firm: { id: string; name: string };
   authMode: AuthMode;
+}
+
+export interface AuthOptions {
+  demoLogin: boolean;
 }
 
 export interface StaffMember {
   email: string;
   name: string;
   role: Role;
+  /** Dev mode lists every firm's staff. */
+  firm?: string;
 }
 
 export interface Stats {
@@ -90,6 +100,37 @@ export interface InboxItem {
   pageCount: number | null;
 }
 
+export type JobStep = 'stored' | 'text_extracted' | 'embedded' | 'fields_extracted' | 'matched' | 'filed' | 'review';
+export type JobStatus = 'queued' | 'running' | 'done' | 'dead';
+
+export interface JobItem {
+  jobId: number;
+  documentId: string;
+  title: string;
+  filename: string | null;
+  step: JobStep;
+  status: JobStatus;
+  attempts: number;
+  maxAttempts: number;
+  lastError: string | null;
+  nextTryAt: string | null;
+  updatedAt: string;
+  outcome: { kind: 'filed'; clientName: string } | { kind: 'review'; reason: string | null } | null;
+}
+
+export interface Batch {
+  id: string;
+  createdAt: string;
+  total: number;
+  items: JobItem[];
+}
+
+export interface BatchFileResult {
+  documentId: string;
+  jobId: number | null;
+  duplicate: boolean;
+}
+
 export interface UploadResult {
   id: string;
   title: string;
@@ -125,6 +166,57 @@ export interface AccuracyCase {
   fieldErrors: string[];
 }
 
+export interface UsageModelRow {
+  operation: string;
+  provider: string;
+  model: string;
+  calls: number;
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number;
+  avgLatencyMs: number;
+  errors: number;
+}
+
+export interface EvalUsage {
+  calls: number;
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number;
+  escalated: number;
+  errors: number;
+}
+
+export interface Usage {
+  days: number;
+  totals: {
+    calls: number;
+    inputTokens: number;
+    outputTokens: number;
+    costUsd: number;
+    avgLatencyMs: number;
+    escalationRate: number;
+    errorRate: number;
+    filedDocuments: number;
+    costPerFiledDocument: number | null;
+    estimatedTokenShare: number;
+  };
+  byDay: { day: string; calls: number; tokens: number; costUsd: number }[];
+  byModel: UsageModelRow[];
+  bySource: { source: string; calls: number; costUsd: number }[];
+  evalRuns: { run: 'report' | 'baseline'; generatedAt?: string; extractor?: string; usage: EvalUsage | null }[];
+}
+
+/** `report`: the latest model run. `baseline`: the offline rules run from CI. */
+export type AccuracyRun = 'report' | 'baseline';
+
+export interface AccuracyRobustness {
+  questions: number;
+  hitRate: number;
+  citationAccuracy: number;
+  misses: string[];
+}
+
 export interface AccuracyReport {
   generatedAt: string;
   extractor: string;
@@ -134,6 +226,8 @@ export interface AccuracyReport {
   byDocType: AccuracyByDocType[];
   cases: AccuracyCase[];
   changes: string[];
+  /** Reports from v2 on: both question variants for every searchable document. */
+  robustness?: AccuracyRobustness;
 }
 
 /** An HTTP error from the API, carrying the server's `{ error }` message when there is one. */
@@ -280,8 +374,25 @@ export const api = {
       body: file,
       headers: { 'content-type': contentType, 'x-filename': headerSafeFilename(file.name) },
     }),
-  accuracy: () => request<AccuracyReport>('GET', '/api/accuracy'),
+  createBatch: (total: number) =>
+    request<{ id: string }>('POST', '/api/batches', {
+      body: JSON.stringify({ total }),
+      headers: { 'content-type': 'application/json' },
+    }),
+  uploadToBatch: (batchId: string, file: File, contentType: 'application/pdf' | 'text/plain', key: string) =>
+    request<BatchFileResult>('POST', `/api/batches/${encodeURIComponent(batchId)}/files`, {
+      body: file,
+      headers: { 'content-type': contentType, 'x-filename': headerSafeFilename(file.name), 'idempotency-key': key },
+    }),
+  batch: (id: string) => request<Batch>('GET', `/api/batches/${encodeURIComponent(id)}`),
+  deadJobs: () => request<{ items: JobItem[] }>('GET', '/api/jobs?status=dead'),
+  retryJob: (id: number) => request<{ ok: true }>('POST', `/api/jobs/${id}/retry`),
+  usage: (days: number) => request<Usage>('GET', `/api/usage?days=${days}`),
+  accuracy: (run: AccuracyRun = 'report') =>
+    request<AccuracyReport>('GET', `/api/accuracy${run === 'baseline' ? '?run=baseline' : ''}`),
   logout: () => request<unknown>('POST', '/auth/logout'),
+  authOptions: () => request<AuthOptions>('GET', '/auth/options'),
+  startDemo: () => request<{ ok: true }>('POST', '/auth/demo'),
 };
 
 export function documentFileUrl(id: string): string {

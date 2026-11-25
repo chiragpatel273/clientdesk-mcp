@@ -1,4 +1,4 @@
-import type { Db } from '../db/index.js';
+import { firmOf, type Db } from '../db/index.js';
 import { fieldValue, type Extraction } from '../ai/extraction.js';
 
 export interface MatchProfile {
@@ -23,12 +23,15 @@ export interface MatchResult {
   reason: string;
 }
 
+/** This firm's active clients: a document is only ever matched against its own firm's clients. */
 export async function loadMatchProfiles(db: Db): Promise<MatchProfile[]> {
   const clients = await db.query<{ id: string; name: string; tax_id_last4: string | null }>(
-    `select id, name, tax_id_last4 from clients where status = 'active' order by id`,
+    `select id, name, tax_id_last4 from clients where status = 'active' and firm_id = $1 order by id`,
+    [firmOf(db)],
   );
   const contacts = await db.query<{ client_id: string; name: string; email: string | null }>(
-    'select client_id, name, email from contacts order by client_id, name',
+    'select client_id, name, email from contacts where firm_id = $1 order by client_id, name',
+    [firmOf(db)],
   );
   return clients.map((c) => ({
     id: c.id,

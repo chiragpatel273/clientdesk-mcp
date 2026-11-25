@@ -1,8 +1,8 @@
+import { seedDemo } from '../src/bootstrap.js';
 import { loadConfig, loadDotEnv } from '../src/config.js';
 import { createDb } from '../src/db/index.js';
 import { migrate } from '../src/db/migrate.js';
-import { seedDemoDocuments } from '../src/demo/documents.js';
-import { isSeeded, resetData, seedDemoFirm } from '../src/demo/seed.js';
+import { resetData } from '../src/demo/seed.js';
 import { createServices } from '../src/services.js';
 
 const reset = process.argv.includes('--reset');
@@ -17,15 +17,9 @@ try {
     await resetData(db);
     console.log('Cleared existing data.');
   }
-  if (await isSeeded(db)) {
-    console.log('Demo data already present. Use `npm run seed -- --reset` to reload it.');
-  } else {
-    await seedDemoFirm(db);
-    const docs = await seedDemoDocuments(db, services);
-    console.log(
-      `Seeded Northbridge Advisory: 3 staff, 12 clients, ${docs} documents (embeddings: ${services.embedder.model}).`,
-    );
-  }
+  // Loads whichever demo firms (Northbridge, Harbourline) or documents are missing; does nothing when all are there.
+  await seedDemo(db, console.log, services);
+  console.log(`Demo data ready (embeddings: ${services.embedder.model}). Use --reset to reload it from scratch.`);
 } finally {
   await db.close();
 }

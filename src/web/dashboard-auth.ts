@@ -4,7 +4,11 @@ import { jwtVerify } from 'jose';
 import type { OAuthSetup } from '../auth/oauth.js';
 import { baseUrl, type Config } from '../config.js';
 import type { Db } from '../db/index.js';
-import { findActorByEmail } from '../domain/staff.js';
+import { recordAudit } from '../domain/audit.js';
+import { DEMO_VISITOR } from '../demo/firm.js';
+import { findActorByEmail, findActorById } from '../domain/staff.js';
+import { CSRF_HEADER } from './api.js';
+import { rateLimit } from './rate-limit.js';
 import { clearSession, issuePendingLogin, issueSession, safeReturnTo, takePendingLogin } from './session.js';
 
 const b64url = (bytes: Buffer) => bytes.toString('base64url');
@@ -89,6 +93,40 @@ export function mountDashboardAuth(app: Express, deps: { db: Db; config: Config;
     if (!actor) return fail(res, 403, 'This account is not a ClientDesk staff member.');
     await issueSession(res, config.sessionSecret, actor.staffId, secure);
     return res.redirect(login.returnTo);
+  });
+
+  // What the sign-in page may offer. Public: it reveals only whether the demo button is on.
+  app.get('/auth/options', (_req: Request, res: Response) => {
+    res.json({ demoLogin: config.demoLogin });
+  });
+
+  // "Try the demo": a short read-only session as the demo visitor. Rate-limited per IP; every sign-in is audited.
+  const demoLimiter = rateLimit(
+    [
+      { max: 5, windowMs: 60_000 },
+      { max: 30, windowMs: 3_600_000 },
+    ],
+    { message: 'Too many demo sign-ins from this address. Try again in a few minutes.' },
+  );
+  app.post('/auth/demo', (req: Request, res: Response, next) => {
+    if (!config.demoLogin) return res.status(404).json({ error: 'Demo sign-in is not enabled.' });
+    if (req.header(CSRF_HEADER) !== '1') return res.status(403).json({ error: 'Missing CSRF header' });
+    return demoLimiter(req, res, next);
+  });
+  app.post('/auth/demo', async (_req: Request, res: Response) => {
+    const actor = await findActorById(db, DEMO_VISITOR.id);
+    if (!actor?.readOnly) {
+      return res.status(503).json({ error: 'The demo visitor is not set up. Start the server with SEED_DEMO=1.' });
+    }
+    await issueSession(res, config.sessionSecret, actor.staffId, secure, { demo: true });
+    await recordAudit(db.forFirm(actor.firmId), {
+      staffId: actor.staffId,
+      tool: 'auth:demo_login',
+      input: null,
+      outcome: 'ok',
+      durationMs: 0,
+    });
+    return res.json({ ok: true });
   });
 
   app.post('/auth/logout', (_req: Request, res: Response) => {

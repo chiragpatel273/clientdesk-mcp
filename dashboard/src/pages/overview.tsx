@@ -116,7 +116,7 @@ function ToolCallsCard({ stats, isPartner }: { stats: Stats | undefined; isPartn
 }
 
 function AccuracySummary() {
-  const report = useQuery({ queryKey: ['accuracy'], queryFn: api.accuracy, staleTime: 5 * 60_000 });
+  const report = useQuery({ queryKey: ['accuracy'], queryFn: () => api.accuracy(), staleTime: 5 * 60_000 });
 
   return (
     <Card className="lg:col-span-2">

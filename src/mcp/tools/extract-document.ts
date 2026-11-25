@@ -2,8 +2,8 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { FIELDS } from '../../ai/extraction.js';
 import { getDocument } from '../../domain/documents.js';
-import { computeMatch, ensureExtraction } from '../../domain/intake.js';
-import { canSeeDocument } from '../document-access.js';
+import { computeMatch, ensureExtraction, ensureText } from '../../domain/intake.js';
+import { canSeeDocument, notFoundAudit } from '../document-access.js';
 import { runTool, type ToolContext } from '../run-tool.js';
 
 export const ExtractDocumentOutput = {
@@ -39,15 +39,40 @@ export function registerExtractDocument(server: McpServer, ctx: ToolContext): vo
       annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     },
     async (input) =>
-      runTool<Output>(ctx, 'extract_document', input, async () => {
-        const doc = await getDocument(ctx.db, input.documentId);
-        if (!doc) {
-          const message = `No document with id ${input.documentId}.`;
-          return { outcome: 'ok', text: message, structured: { status: 'not_found', message } };
-        }
-        // Filed documents: check access before reading anything.
-        if (doc.status === 'filed') {
-          const access = await canSeeDocument(ctx, doc, null);
+      runTool<Output>(
+        ctx,
+        'extract_document',
+        input,
+        async () => {
+          const found = await getDocument(ctx.db, input.documentId);
+          if (!found) {
+            const message = `No document with id ${input.documentId}.`;
+            return {
+              ...(await notFoundAudit(ctx, 'extract_document', 'document', input.documentId)),
+              text: message,
+              structured: { status: 'not_found', message },
+            };
+          }
+          // Filed and in-process documents: check access before reading anything.
+          if (found.status === 'filed' || found.status === 'processing') {
+            const access = await canSeeDocument(ctx, found, null);
+            if (!access.allowed) {
+              return {
+                outcome: 'denied',
+                text: access.reason,
+                structured: { status: 'denied', message: access.reason },
+                detail: access.detail,
+              };
+            }
+          }
+
+          const read = await ensureText(ctx.db, ctx.services, found);
+          const extraction = await ensureExtraction(ctx.db, ctx.services, read, input.refresh);
+          // Extraction can take a while: judge the document as it is now, not as it was when it was asked for.
+          const doc = (await getDocument(ctx.db, read.id)) ?? read;
+          const settled = doc.status === 'filed' || doc.status === 'processing';
+          const match = settled ? null : await computeMatch(ctx.db, ctx.services, doc, extraction);
+          const access = await canSeeDocument(ctx, doc, match);
           if (!access.allowed) {
             return {
               outcome: 'denied',
@@ -56,60 +81,48 @@ export function registerExtractDocument(server: McpServer, ctx: ToolContext): vo
               detail: access.detail,
             };
           }
-        }
 
-        const extraction = await ensureExtraction(ctx.db, ctx.services, doc, input.refresh);
-        if (doc.status !== 'filed') {
-          const access = await canSeeDocument(ctx, doc, await computeMatch(ctx.db, ctx.services, doc, extraction));
-          if (!access.allowed) {
-            return {
-              outcome: 'denied',
-              text: access.reason,
-              structured: { status: 'denied', message: access.reason },
-              detail: access.detail,
-            };
-          }
-        }
-
-        const low = extraction.fields.filter((f) => f.confidence < LOW).map((f) => f.name);
-        if (extraction.docTypeConfidence < LOW) low.unshift('docType');
-        const labels = extraction.docType === 'other' ? [] : FIELDS[extraction.docType];
-        const lines = extraction.fields.map((field) => {
-          const def = labels.find((d) => d.name === field.name);
-          return `- ${field.name}: ${field.value ?? '(not found)'} [${Math.round(field.confidence * 100)}%${def?.required ? ', required' : ''}]`;
-        });
-        const message =
-          `${doc.title}: ${extraction.docType} (${Math.round(extraction.docTypeConfidence * 100)}%)` +
-          `${extraction.clientName ? ` for "${extraction.clientName}"` : ''}` +
-          `${extraction.taxYear ? `, tax year ${extraction.taxYear}` : ''}.`;
-        return {
-          outcome: 'ok',
-          text: [
-            message,
-            ...lines,
-            low.length
-              ? `Low confidence: ${low.join(', ')}. Ask the user to check these.`
-              : 'All fields are high confidence.',
-          ].join('\n'),
-          structured: {
-            status: 'extracted',
-            message,
-            document: {
-              id: doc.id,
-              title: doc.title,
-              status: doc.status,
-              link: ctx.services.links.url(doc.id, ctx.actor.staffId),
+          const low = extraction.fields.filter((f) => f.confidence < LOW).map((f) => f.name);
+          if (extraction.docTypeConfidence < LOW) low.unshift('docType');
+          const labels = extraction.docType === 'other' ? [] : FIELDS[extraction.docType];
+          const lines = extraction.fields.map((field) => {
+            const def = labels.find((d) => d.name === field.name);
+            return `- ${field.name}: ${field.value ?? '(not found)'} [${Math.round(field.confidence * 100)}%${def?.required ? ', required' : ''}]`;
+          });
+          const message =
+            `${doc.title}: ${extraction.docType} (${Math.round(extraction.docTypeConfidence * 100)}%)` +
+            `${extraction.clientName ? ` for "${extraction.clientName}"` : ''}` +
+            `${extraction.taxYear ? `, tax year ${extraction.taxYear}` : ''}.`;
+          return {
+            outcome: 'ok',
+            text: [
+              message,
+              ...lines,
+              low.length
+                ? `Low confidence: ${low.join(', ')}. Ask the user to check these.`
+                : 'All fields are high confidence.',
+            ].join('\n'),
+            structured: {
+              status: 'extracted',
+              message,
+              document: {
+                id: doc.id,
+                title: doc.title,
+                status: doc.status,
+                link: ctx.services.links.url(doc.id, ctx.actor.staffId),
+              },
+              docType: extraction.docType,
+              docTypeConfidence: extraction.docTypeConfidence,
+              clientNameOnDocument: extraction.clientName,
+              taxYear: extraction.taxYear,
+              fields: extraction.fields,
+              lowConfidenceFields: low,
+              model: extraction.model,
             },
-            docType: extraction.docType,
-            docTypeConfidence: extraction.docTypeConfidence,
-            clientNameOnDocument: extraction.clientName,
-            taxYear: extraction.taxYear,
-            fields: extraction.fields,
-            lowConfidenceFields: low,
-            model: extraction.model,
-          },
-          detail: `model ${extraction.model}`,
-        };
-      }),
+            detail: `model ${extraction.model}`,
+          };
+        },
+        { costly: true },
+      ),
   );
 }

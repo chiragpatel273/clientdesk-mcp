@@ -1,5 +1,6 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import {
+  Coins,
   FileCheck2,
   Gauge,
   Inbox,
@@ -20,6 +21,7 @@ import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { Select } from './ui/select';
 import { Tooltip } from './ui/tooltip';
+import { DemoBanner, DemoVisitor, useAuthOptions, useStartDemo } from './demo';
 
 export function RoleBadge({ role }: { role: Role }) {
   return (
@@ -55,9 +57,13 @@ export function ThemeToggle() {
   );
 }
 
+const DEMO_OPTION = '__demo__';
+
 function DevUserSwitcher() {
   const { me, switchUser } = useSession();
   const staff = useQuery({ queryKey: ['staff'], queryFn: api.staff, staleTime: Infinity, retry: false });
+  const options = useAuthOptions();
+  const startDemo = useStartDemo();
   const list = staff.data?.staff ?? [{ email: me.email, name: me.name, role: me.role }];
 
   return (
@@ -74,14 +80,16 @@ function DevUserSwitcher() {
         id="dev-user"
         className="w-40 sm:w-56"
         value={me.email}
-        onChange={(e) => switchUser(e.target.value)}
-        disabled={staff.isPending}
+        onChange={(e) => (e.target.value === DEMO_OPTION ? startDemo.mutate() : switchUser(e.target.value))}
+        disabled={staff.isPending || startDemo.isPending}
       >
         {list.map((s) => (
           <option key={s.email} value={s.email}>
             {s.name} · {s.role === 'partner' ? 'Partner' : 'Assistant'}
+            {s.firm && s.firm !== me.firm.name ? ` · ${s.firm}` : ''}
           </option>
         ))}
+        {options.data?.demoLogin && <option value={DEMO_OPTION}>Try the demo (read-only)</option>}
       </Select>
     </div>
   );
@@ -114,12 +122,20 @@ function SignedInUser() {
   );
 }
 
-const nav: { to: string; label: string; icon: LucideIcon; end?: boolean; count?: 'review' | 'inbox' }[] = [
+const nav: {
+  to: string;
+  label: string;
+  icon: LucideIcon;
+  end?: boolean;
+  count?: 'review' | 'inbox';
+  partnersOnly?: boolean;
+}[] = [
   { to: '/', label: 'Overview', icon: LayoutDashboard, end: true },
   { to: '/audit', label: 'Audit log', icon: ScrollText },
   { to: '/review', label: 'Review queue', icon: FileCheck2, count: 'review' },
   { to: '/inbox', label: 'Inbox', icon: Inbox, count: 'inbox' },
   { to: '/accuracy', label: 'Accuracy', icon: Gauge },
+  { to: '/usage', label: 'Usage', icon: Coins, partnersOnly: true },
 ];
 
 export function Layout() {
@@ -128,6 +144,7 @@ export function Layout() {
 
   return (
     <div className="min-h-dvh">
+      {me.readOnly && <DemoBanner />}
       <header className="sticky top-0 z-40 border-b bg-background/85 backdrop-blur supports-[backdrop-filter]:bg-background/70">
         <div className="mx-auto flex h-14 max-w-7xl items-center justify-between gap-3 px-4 sm:px-6">
           <div className="flex min-w-0 items-center gap-2">
@@ -136,41 +153,45 @@ export function Layout() {
             <span className="hidden text-muted-foreground/60 sm:inline" aria-hidden>
               /
             </span>
-            <span className="hidden truncate text-sm text-muted-foreground sm:inline">Northbridge Advisory</span>
+            <span className="hidden truncate text-sm text-muted-foreground sm:inline" data-testid="firm-name">
+              {me.firm.name}
+            </span>
           </div>
           <div className="flex items-center gap-1 sm:gap-2">
-            {me.authMode === 'dev' ? <DevUserSwitcher /> : <SignedInUser />}
+            {me.readOnly ? <DemoVisitor /> : me.authMode === 'dev' ? <DevUserSwitcher /> : <SignedInUser />}
             <ThemeToggle />
           </div>
         </div>
         <nav aria-label="Main" className="mx-auto max-w-7xl overflow-x-auto px-2 sm:px-4">
           <ul className="flex gap-1">
-            {nav.map((item) => {
-              const count = item.count ? stats.data?.documents[item.count] : undefined;
-              return (
-                <li key={item.to}>
-                  <NavLink
-                    to={item.to}
-                    end={item.end}
-                    className={({ isActive }) =>
-                      cn(
-                        'relative flex h-10 items-center gap-2 px-3 text-sm whitespace-nowrap text-muted-foreground transition-colors hover:text-foreground',
-                        'after:absolute after:inset-x-2 after:-bottom-px after:h-0.5 after:rounded-full',
-                        isActive && 'font-medium text-foreground after:bg-primary',
-                      )
-                    }
-                  >
-                    <item.icon className="size-4" />
-                    {item.label}
-                    {count !== undefined && count > 0 && (
-                      <span className="rounded-full bg-muted px-1.5 text-xs font-medium text-muted-foreground tabular-nums">
-                        {count}
-                      </span>
-                    )}
-                  </NavLink>
-                </li>
-              );
-            })}
+            {nav
+              .filter((item) => !item.partnersOnly || me.role === 'partner')
+              .map((item) => {
+                const count = item.count ? stats.data?.documents[item.count] : undefined;
+                return (
+                  <li key={item.to}>
+                    <NavLink
+                      to={item.to}
+                      end={item.end}
+                      className={({ isActive }) =>
+                        cn(
+                          'relative flex h-10 items-center gap-2 px-3 text-sm whitespace-nowrap text-muted-foreground transition-colors hover:text-foreground',
+                          'after:absolute after:inset-x-2 after:-bottom-px after:h-0.5 after:rounded-full',
+                          isActive && 'font-medium text-foreground after:bg-primary',
+                        )
+                      }
+                    >
+                      <item.icon className="size-4" />
+                      {item.label}
+                      {count !== undefined && count > 0 && (
+                        <span className="rounded-full bg-muted px-1.5 text-xs font-medium text-muted-foreground tabular-nums">
+                          {count}
+                        </span>
+                      )}
+                    </NavLink>
+                  </li>
+                );
+              })}
           </ul>
         </nav>
       </header>
@@ -178,7 +199,7 @@ export function Layout() {
         <Outlet />
       </main>
       <footer className="mx-auto max-w-7xl px-4 pb-8 text-xs text-muted-foreground sm:px-6">
-        Demo data: Northbridge Advisory and everyone in it are fictional.
+        Demo data: every firm, client and person here is fictional.
       </footer>
     </div>
   );

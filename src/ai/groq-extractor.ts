@@ -6,6 +6,7 @@ import {
   type Output,
 } from './extraction-prompt.js';
 import { DOC_TYPES, weakestConfidence, type Extraction, type Extractor } from './extraction.js';
+import { timedCall } from './usage.js';
 
 /**
  * Extraction through Groq (open-weight models, OpenAI-compatible API, free tier available). Same prompt, output shape
@@ -61,6 +62,7 @@ function numbersAsText(raw: unknown): unknown {
 
 interface ChatResponse {
   choices?: { finish_reason?: string; message?: { content?: string | null } }[];
+  usage?: { prompt_tokens?: number; completion_tokens?: number };
   error?: { message?: string };
 }
 
@@ -80,6 +82,7 @@ export function groqExtractor(options: GroqExtractorOptions): Extractor {
         method: 'POST',
         headers: { authorization: `Bearer ${options.apiKey}`, 'content-type': 'application/json' },
         body: JSON.stringify(body),
+        signal: AbortSignal.timeout(60_000),
       });
       const retryable = response.status === 429 || response.status >= 500;
       if (retryable && attempt < MAX_ATTEMPTS) {
@@ -95,7 +98,13 @@ export function groqExtractor(options: GroqExtractorOptions): Extractor {
   }
 
   async function run(model: string, prompt: string): Promise<Output> {
-    const json = await post({
+    const call = (body: unknown) =>
+      timedCall(
+        { operation: 'extract', provider: 'groq', model, escalated: model === GROQ_LARGE_MODEL },
+        () => post(body),
+        (res) => ({ inputTokens: res.usage?.prompt_tokens ?? 0, outputTokens: res.usage?.completion_tokens ?? 0 }),
+      );
+    const json = await call({
       model,
       messages: [
         { role: 'system', content: EXTRACTION_SYSTEM_PROMPT },

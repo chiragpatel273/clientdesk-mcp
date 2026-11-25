@@ -14,6 +14,7 @@ import { SignInPage } from './pages/sign-in';
 
 // Recharts is the largest dependency and only this page uses it, so it loads on demand.
 const AccuracyPage = lazy(() => import('./pages/accuracy').then((m) => ({ default: m.AccuracyPage })));
+const UsagePage = lazy(() => import('./pages/usage').then((m) => ({ default: m.UsagePage })));
 
 function PageFallback() {
   return (
@@ -49,6 +50,14 @@ const router = createBrowserRouter(
           element: (
             <Suspense fallback={<PageFallback />}>
               <AccuracyPage />
+            </Suspense>
+          ),
+        },
+        {
+          path: 'usage',
+          element: (
+            <Suspense fallback={<PageFallback />}>
+              <UsagePage />
             </Suspense>
           ),
         },

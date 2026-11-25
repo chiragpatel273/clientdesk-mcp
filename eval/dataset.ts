@@ -388,14 +388,23 @@ export const DOCUMENTS: EvalDocument[] = [
 
 // ---------- questions ----------
 
-function questionFor(doc: EvalDocument, paraphrased: boolean): Omit<EvalQuestion, 'id'> {
+/** What each form reports, in words: the paraphrased tax question asks for this instead of naming the form. */
+const AMOUNT_KIND: Record<string, string> = {
+  '1099-INT': 'interest income',
+  '1099-DIV': 'dividend income',
+  'W-2': 'wages',
+  '1098': 'mortgage interest',
+};
+
+export function questionFor(doc: EvalDocument, paraphrased: boolean): Omit<EvalQuestion, 'id'> {
   const f = doc.fields;
   const lastPage = doc.pages.length;
   switch (doc.docType) {
     case 'invoice':
       return paraphrased
         ? {
-            question: `How much does ${f.billed_to} owe ${f.vendor_name} in total?`,
+            // Names the invoice: a client can have two invoices from the same vendor.
+            question: `How much does ${f.billed_to} owe ${f.vendor_name} in total for invoice ${f.invoice_number}?`,
             documentId: doc.id,
             page: lastPage,
             paraphrased,
@@ -437,7 +446,8 @@ function questionFor(doc: EvalDocument, paraphrased: boolean): Omit<EvalQuestion
     case 'tax_form':
       return paraphrased
         ? {
-            question: `What did ${f.payer_name} report for ${f.recipient_name} for ${f.tax_year}?`,
+            // Names the kind of amount (not the form): one payer can send a person two forms in a year.
+            question: `How much ${AMOUNT_KIND[f.form_type!] ?? 'income'} did ${f.payer_name} report for ${f.recipient_name} for ${f.tax_year}?`,
             documentId: doc.id,
             page: 1,
             paraphrased,
@@ -470,7 +480,7 @@ for (const doc of DOCUMENTS) identityCounts.set(identity(doc), (identityCounts.g
 
 /** Prose and scans are extraction tests; the non-client and unidentified look-alike are never filed. */
 const UNSEARCHABLE: (HardCase | null)[] = ['prose layout', 'scan (OCR noise)', 'not a client', 'look-alike, no second id'];
-const eligible = DOCUMENTS.filter(
+export const eligible = DOCUMENTS.filter(
   (d) => d.clientId !== null && !UNSEARCHABLE.includes(d.hardCase) && identityCounts.get(identity(d)) === 1,
 );
 // Round-robin over the four types so each gets 7–8 questions, hard cases (multi-page, prior year, look-alike,

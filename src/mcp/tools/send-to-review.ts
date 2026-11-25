@@ -1,10 +1,11 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { getDocument, markForReview } from '../../domain/documents.js';
+import { notFoundAudit } from '../document-access.js';
 import { runTool, type ToolContext } from '../run-tool.js';
 
 export const SendToReviewOutput = {
-  status: z.enum(['sent', 'already_in_review', 'not_allowed', 'not_found']),
+  status: z.enum(['sent', 'already_in_review', 'not_allowed', 'not_found', 'denied']),
   message: z.string(),
 };
 type Output = z.infer<z.ZodObject<typeof SendToReviewOutput>>;
@@ -26,26 +27,48 @@ export function registerSendToReview(server: McpServer, ctx: ToolContext): void 
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     async (input) =>
-      runTool<Output>(ctx, 'send_to_review', input, async () => {
-        const doc = await getDocument(ctx.db, input.documentId);
-        if (!doc) {
-          const message = `No document with id ${input.documentId}.`;
-          return { outcome: 'ok', text: message, structured: { status: 'not_found', message } };
-        }
-        if (doc.status === 'review') {
-          const message = 'This document is already in the review queue.';
-          return { outcome: 'ok', text: message, structured: { status: 'already_in_review', message } };
-        }
-        if (doc.status === 'filed') {
-          const message = 'Filed documents can’t be sent to review.';
-          return { outcome: 'ok', text: message, structured: { status: 'not_allowed', message } };
-        }
-        if (!(await markForReview(ctx.db, { id: doc.id, reason: input.reason, staffId: ctx.actor.staffId }))) {
-          const message = 'The document changed while sending it to review. Check the inbox.';
-          return { outcome: 'ok', text: message, structured: { status: 'not_allowed', message } };
-        }
-        const message = `Sent "${doc.title}" to the review queue: ${input.reason}`;
-        return { outcome: 'ok', text: message, structured: { status: 'sent', message } };
-      }),
+      runTool<Output>(
+        ctx,
+        'send_to_review',
+        input,
+        async () => {
+          const doc = await getDocument(ctx.db, input.documentId);
+          if (!doc) {
+            const message = `No document with id ${input.documentId}.`;
+            return {
+              ...(await notFoundAudit(ctx, 'send_to_review', 'document', input.documentId)),
+              text: message,
+              structured: { status: 'not_found', message },
+            };
+          }
+          if (doc.status === 'review') {
+            const message = 'This document is already in the review queue.';
+            return { outcome: 'ok', text: message, structured: { status: 'already_in_review', message } };
+          }
+          if (doc.status === 'processing') {
+            const message =
+              'Batch intake is processing this document; it will be filed or sent to review automatically.';
+            return { outcome: 'ok', text: message, structured: { status: 'not_allowed', message } };
+          }
+          if (doc.status === 'filed') {
+            const message = 'Filed documents can’t be sent to review.';
+            return { outcome: 'ok', text: message, structured: { status: 'not_allowed', message } };
+          }
+          if (
+            !(await markForReview(ctx.db, {
+              id: doc.id,
+              reason: input.reason,
+              staffId: ctx.actor.staffId,
+              audit: { tool: 'send_to_review', input },
+            }))
+          ) {
+            const message = 'The document changed while sending it to review. Check the inbox.';
+            return { outcome: 'ok', text: message, structured: { status: 'not_allowed', message } };
+          }
+          const message = `Sent "${doc.title}" to the review queue: ${input.reason}`;
+          return { outcome: 'ok', text: message, structured: { status: 'sent', message }, audited: true };
+        },
+        { writes: true },
+      ),
   );
 }

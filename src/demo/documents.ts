@@ -1,5 +1,6 @@
 import type { DocType } from '../ai/extraction.js';
-import type { Db } from '../db/index.js';
+import { firmOf, type Db } from '../db/index.js';
+import { HL_DOCUMENTS } from './second-firm.js';
 import { renderTextPdf } from '../documents/pdf-render.js';
 import { ingestDocument } from '../domain/documents.js';
 import type { AppServices } from '../services.js';
@@ -284,9 +285,33 @@ export const DEMO_DOCUMENTS: DemoDocument[] = [
   },
 ];
 
+/** Loads Northbridge's demo documents. `db` is scoped to Northbridge. */
 export async function seedDemoDocuments(db: Db, services: Pick<AppServices, 'files' | 'embedder'>): Promise<number> {
+  const added = await seedDocuments(db, services, DEMO_DOCUMENTS);
+  // The demo's open item closed by an earlier filing, so "received" items show their source document.
+  await db.query(
+    `update open_items set document_id = 'doc_acme_engagement_2026'
+     where firm_id = $1 and client_id = 'cl_acme' and description like 'Signed engagement letter%' and document_id is null`,
+    [firmOf(db)],
+  );
+  return added;
+}
+
+/** Loads Harbourline's documents (the second firm). `db` is scoped to Harbourline. */
+export async function seedSecondFirmDocuments(
+  db: Db,
+  services: Pick<AppServices, 'files' | 'embedder'>,
+): Promise<number> {
+  return seedDocuments(db, services, HL_DOCUMENTS);
+}
+
+async function seedDocuments(
+  db: Db,
+  services: Pick<AppServices, 'files' | 'embedder'>,
+  documents: DemoDocument[],
+): Promise<number> {
   let added = 0;
-  for (const doc of DEMO_DOCUMENTS) {
+  for (const doc of documents) {
     const bytes = await renderTextPdf(doc.title, doc.pages);
     const { duplicate } = await ingestDocument(db, services, {
       id: doc.id,
@@ -294,16 +319,11 @@ export async function seedDemoDocuments(db: Db, services: Pick<AppServices, 'fil
       mimeType: 'application/pdf',
       filename: doc.filename,
       title: doc.title,
-      uploadedBy: doc.filed?.staffId ?? 'st_tom',
+      uploadedBy: doc.filed?.staffId ?? (firmOf(db) === 'firm_northbridge' ? 'st_tom' : 'st_hl_sam'),
       receivedAt: doc.receivedAt,
       filed: doc.filed,
     });
     if (!duplicate) added++;
   }
-  // The demo's open item closed by an earlier filing, so "received" items show their source document.
-  await db.query(
-    `update open_items set document_id = 'doc_acme_engagement_2026'
-     where client_id = 'cl_acme' and description like 'Signed engagement letter%' and document_id is null`,
-  );
   return added;
 }

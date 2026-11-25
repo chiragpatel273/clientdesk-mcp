@@ -12,7 +12,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import { api, isApiError, type AccuracyByDocType, type AccuracyReport } from '../api';
+import { api, isApiError, type AccuracyByDocType, type AccuracyReport, type AccuracyRun } from '../api';
 import { MetricTile, MetricTileSkeleton } from '../components/metric-tile';
 import { PassBadge } from '../components/outcome-badge';
 import { PageHeader } from '../components/page-header';
@@ -26,13 +26,28 @@ import { Tabs } from '../components/ui/tabs';
 import { formatDateTime, formatInt, formatPercent, formatRelative, humanize } from '../lib/format';
 
 export function AccuracyPage() {
-  const report = useQuery({ queryKey: ['accuracy'], queryFn: api.accuracy, staleTime: 5 * 60_000 });
+  const [run, setRun] = useState<AccuracyRun>('report');
+  const report = useQuery({
+    queryKey: run === 'report' ? ['accuracy'] : ['accuracy', run],
+    queryFn: () => api.accuracy(run),
+    staleTime: 5 * 60_000,
+  });
 
   return (
     <>
       <PageHeader
         title="Accuracy report"
         description="Measured on synthetic labelled documents and questions. Real numbers, published even when they miss a target."
+      />
+      <Tabs
+        label="Which run"
+        className="mb-6"
+        value={run}
+        onChange={setRun}
+        options={[
+          { value: 'report', label: 'Latest model run' },
+          { value: 'baseline', label: 'Offline baseline (CI)' },
+        ]}
       />
       {report.isPending ? (
         <AccuracySkeleton />
@@ -150,6 +165,36 @@ function Report({ report }: { report: AccuracyReport }) {
       </div>
 
       <CasesTable cases={report.cases} />
+
+      {report.robustness && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <FlaskConical className="size-4 text-muted-foreground" /> Wider check
+            </CardTitle>
+            <CardDescription>
+              Not a target: both question variants for every searchable document (
+              {formatInt(report.robustness.questions)} questions, including the 30 asked ones). Looked at while tuning,
+              so it shows breadth but is not an independent test.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-3 text-sm">
+            <p>
+              Hit rate <strong className="tabular-nums">{formatPercent(report.robustness.hitRate)}</strong> · citation
+              accuracy <strong className="tabular-nums">{formatPercent(report.robustness.citationAccuracy)}</strong>
+            </p>
+            {report.robustness.misses.length > 0 && (
+              <ul className="grid list-disc gap-1 pl-5 text-muted-foreground">
+                {report.robustness.misses.map((m) => (
+                  <li key={m} className="font-mono text-xs">
+                    {m}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader>

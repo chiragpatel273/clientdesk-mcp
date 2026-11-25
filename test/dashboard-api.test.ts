@@ -55,7 +55,9 @@ describe('dashboard API and document links (dev auth)', () => {
 
   it('shows assistants only their own audit rows', async () => {
     await api('/api/documents/doc_lakeside_software/file', TOM); // a denied view, logged as Tom
-    const tom = (await (await api('/api/audit', TOM)).json()) as { rows: { staff: { id: string }; detail: string | null }[] };
+    const tom = (await (await api('/api/audit', TOM)).json()) as {
+      rows: { staff: { id: string }; detail: string | null }[];
+    };
     expect(tom.rows.length).toBeGreaterThan(0);
     expect(tom.rows.every((r) => r.staff.id === 'st_tom')).toBe(true);
     expect(tom.rows.every((r) => r.detail === null)).toBe(true); // details can name other clients

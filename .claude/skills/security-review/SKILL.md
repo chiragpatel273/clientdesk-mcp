@@ -10,6 +10,12 @@ If everything passes, say so in one line.
 
 ## Access and identity
 
+- [ ] Firm data is read and written only through `db.forFirm(actor.firmId)`; queries filter `firm_id = firmOf(db)`;
+      new firm-owned tables have `firm_id`, same-firm foreign keys and the RLS policy.
+- [ ] An unknown id answers and is logged the same whether it belongs to another firm or to nobody (no existence oracle,
+      not even through the caller's own audit log); `noteCrossFirm` records it for the owner.
+- [ ] Public (read-only demo) sessions can't change state through a GET, cause a model call, or flood the database.
+- [ ] A status change and what must come with it (note, audit row, job state) are one statement.
 - [ ] Every tool handler runs inside `runTool()`.
 - [ ] Client data is read only after `canAccessClient` / `partitionByAccess` for **this** actor.
 - [ ] Denied responses contain no client data: names only when the user already typed them, no contacts, notes or documents.

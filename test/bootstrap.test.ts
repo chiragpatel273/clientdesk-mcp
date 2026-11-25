@@ -3,13 +3,19 @@ import { seedDemo } from '../src/bootstrap.js';
 import { createDb } from '../src/db/index.js';
 import { migrate } from '../src/db/migrate.js';
 import { DEMO_DOCUMENTS } from '../src/demo/documents.js';
+import { HL_DOCUMENTS } from '../src/demo/second-firm.js';
 import { testServices } from './helpers.js';
 
 describe('demo seeding on start-up', () => {
   it('finishes loading documents after a first start that failed on file storage', async () => {
     const db = await createDb('pglite://memory');
     await migrate(db);
-    const count = async () => Number((await db.query<{ n: number }>('select count(*)::int as n from documents'))[0]?.n);
+    const count = async () =>
+      Number(
+        (
+          await db.query<{ n: number }>(`select count(*)::int as n from documents where firm_id = 'firm_northbridge'`)
+        )[0]?.n,
+      );
 
     // First start: storage is misconfigured, so the firm loads and the first document fails.
     const broken = testServices({
@@ -27,7 +33,12 @@ describe('demo seeding on start-up', () => {
     const logs: string[] = [];
     await seedDemo(db, (m) => logs.push(m), testServices());
     expect(await count()).toBe(DEMO_DOCUMENTS.length);
-    expect(logs).toEqual([`Loaded ${DEMO_DOCUMENTS.length} demo documents.`]);
+    // The first start stopped at Northbridge's first document, before the second firm: both finish now.
+    expect(logs).toEqual([
+      `Loaded ${DEMO_DOCUMENTS.length} Northbridge Advisory demo documents.`,
+      'Seeded the Harbourline Tax Partners demo firm.',
+      `Loaded ${HL_DOCUMENTS.length} Harbourline Tax Partners demo documents.`,
+    ]);
 
     // Later starts do nothing.
     logs.length = 0;

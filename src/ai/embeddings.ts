@@ -1,4 +1,5 @@
 import type { Config } from '../config.js';
+import { estimateTokens, timedCall } from './usage.js';
 
 export const EMBEDDING_DIMS = 1024; // matches document_chunks.embedding vector(1024)
 
@@ -53,33 +54,58 @@ export function localEmbedder(): Embedder {
   };
   return {
     model: 'local-hash-v1',
-    async embed(texts) {
-      return texts.map(embedOne);
-    },
+    embed: (texts) =>
+      timedCall(
+        { operation: 'embed', provider: 'local', model: 'local-hash-v1' },
+        async () => texts.map(embedOne),
+        () => ({ inputTokens: estimateTokens(texts), outputTokens: 0, tokensEstimated: true }),
+      ),
   };
 }
 
-/** Voyage AI embeddings (https://docs.voyageai.com/reference/embeddings-api). */
-export function voyageEmbedder(apiKey: string, model = 'voyage-3.5'): Embedder {
+export const VOYAGE_MODEL = 'voyage-3.5';
+
+/**
+ * Voyage AI embeddings (https://docs.voyageai.com/reference/embeddings-api): the production option. Real semantic
+ * vectors, so a paraphrase ("left at the end of the period") finds the passage it means ("closing balance") without
+ * sharing its words. `input_type` lets Voyage embed questions and passages differently; 1024 dimensions match the
+ * `vector(1024)` column. Switching embedders needs `npm run reindex` (vectors from different models are never
+ * compared).
+ */
+export function voyageEmbedder(apiKey: string, model = VOYAGE_MODEL, doFetch: typeof fetch = fetch): Embedder {
   const BATCH = 64;
+
+  async function embedBatch(batch: string[], kind: 'document' | 'query') {
+    const res = await doFetch('https://api.voyageai.com/v1/embeddings', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ input: batch, model, input_type: kind, output_dimension: EMBEDDING_DIMS }),
+      signal: AbortSignal.timeout(60_000),
+    });
+    if (!res.ok) throw new Error(`Voyage embeddings failed (${res.status})`);
+    const body = (await res.json()) as {
+      data: { embedding: number[]; index: number }[];
+      usage?: { total_tokens?: number };
+    };
+    const vectors = body.data.sort((a, b) => a.index - b.index).map((d) => d.embedding);
+    if (vectors.length !== batch.length || vectors.some((v) => v.length !== EMBEDDING_DIMS)) {
+      throw new Error('Voyage returned an unexpected number or size of vectors');
+    }
+    return { vectors, tokens: body.usage?.total_tokens ?? estimateTokens(batch) };
+  }
+
   return {
     model,
     async embed(texts, kind) {
       const out: number[][] = [];
       for (let i = 0; i < texts.length; i += BATCH) {
-        const res = await fetch('https://api.voyageai.com/v1/embeddings', {
-          method: 'POST',
-          headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
-          body: JSON.stringify({
-            input: texts.slice(i, i + BATCH),
-            model,
-            input_type: kind,
-            output_dimension: EMBEDDING_DIMS,
-          }),
-        });
-        if (!res.ok) throw new Error(`Voyage embeddings failed (${res.status})`);
-        const body = (await res.json()) as { data: { embedding: number[]; index: number }[] };
-        out.push(...body.data.sort((a, b) => a.index - b.index).map((d) => d.embedding));
+        const batch = texts.slice(i, i + BATCH);
+        const { vectors } = await timedCall(
+          { operation: 'embed', provider: 'voyage', model },
+          () => embedBatch(batch, kind),
+          (r) => ({ inputTokens: r.tokens, outputTokens: 0 }),
+        );
+        out.push(...vectors);
       }
       return out;
     },

@@ -19,7 +19,7 @@ RUN npm ci --omit=dev && npm cache clean --force
 COPY --from=build /app/dist dist
 COPY --from=build /app/dashboard/dist dashboard/dist
 COPY migrations migrations
-COPY eval/report.json eval/report.json
+COPY eval/report.json eval/baseline.json eval/
 # Only used without Neon/S3 (local PGlite and files); production should use DATABASE_URL and STORAGE=s3.
 RUN mkdir -p .data && chown node:node .data
 USER node

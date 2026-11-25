@@ -1,7 +1,10 @@
 import { setupOAuth } from './auth/oauth.js';
-import { openDatabase } from './bootstrap.js';
+import { errorCategory } from './ai/usage.js';
+import { openDatabase, rebuildPassages } from './bootstrap.js';
 import { baseUrl, loadConfig, loadDotEnv } from './config.js';
 import { createHttpApp } from './http.js';
+import { createWorker } from './jobs/worker.js';
+import { listen } from './listen.js';
 import { createServices } from './services.js';
 
 loadDotEnv();
@@ -15,20 +18,35 @@ if (oauth && !oauth.metadata.registration_endpoint) {
 }
 const services = createServices(config);
 const db = await openDatabase(config, console.log, services);
-const app = createHttpApp({ db, config, services, oauth });
-
-const server = app.listen(config.port, () => {
-  const base = baseUrl(config);
-  console.log(`ClientDesk MCP listening on ${new URL('/mcp', base).href} (auth: ${config.authMode})`);
-  console.log(`Dashboard: ${new URL('/dashboard/', base).href}`);
-  console.log(
-    `Extractor: ${services.extractor.name}; embeddings: ${services.embedder.model}; storage: ${config.storage.kind}`,
+// Batch intake runs in this process (Render's free plan has no background workers); `WORKER=0` turns it off when a
+// separate `npm run worker` process does the work.
+const worker = config.jobs.worker ? createWorker({ db, services, config: config.jobs, log: console.log }) : null;
+const app = createHttpApp({ db, config, services, oauth, onJobQueued: () => worker?.wake() });
+const server = await listen(app, config.port).catch(async (error: NodeJS.ErrnoException) => {
+  console.error(
+    error.code === 'EADDRINUSE'
+      ? `Port ${config.port} is already in use: stop the other server, or set PORT to a free one.`
+      : `Could not start the server: ${error.message}`,
   );
+  await db.close();
+  process.exit(1);
 });
+const base = baseUrl(config);
+console.log(`ClientDesk MCP listening on ${new URL('/mcp', base).href} (auth: ${config.authMode})`);
+console.log(`Dashboard: ${new URL('/dashboard/', base).href}`);
+console.log(
+  `Extractor: ${services.extractor.name}; embeddings: ${services.embedder.model}; storage: ${config.storage.kind}`,
+);
+
+worker?.start();
+void rebuildPassages(db, console.log, services).catch((error: unknown) =>
+  console.error(`Could not check search passages: ${errorCategory(error)}`),
+);
 
 const shutdown = () => {
   server.close(() => {
-    void db.close().finally(() => process.exit(0));
+    // Let running steps finish; anything left is reclaimed as stuck by the next worker.
+    void (worker?.stop() ?? Promise.resolve()).then(() => db.close()).finally(() => process.exit(0));
   });
 };
 process.on('SIGINT', shutdown);

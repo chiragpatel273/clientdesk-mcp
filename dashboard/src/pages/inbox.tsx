@@ -10,6 +10,9 @@ import { Skeleton } from '../components/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table';
 import { formatDateTime, formatInt, formatRelative } from '../lib/format';
 import { cn } from '../lib/utils';
+import { contentTypeFor } from '../lib/files';
+import { BatchIntakeCard, DeadLetterCard } from '../components/batch-intake';
+import { useSession } from '../lib/session';
 
 type UploadStatus =
   { state: 'uploading' } | { state: 'done'; title: string; duplicate: boolean } | { state: 'error'; message: string };
@@ -20,14 +23,8 @@ interface UploadEntry {
   status: UploadStatus;
 }
 
-function contentTypeFor(file: File): 'application/pdf' | 'text/plain' | null {
-  const name = file.name.toLowerCase();
-  if (file.type === 'application/pdf' || name.endsWith('.pdf')) return 'application/pdf';
-  if (file.type === 'text/plain' || name.endsWith('.txt')) return 'text/plain';
-  return null;
-}
-
 export function InboxPage() {
+  const { isPartner } = useSession();
   const inbox = useQuery({ queryKey: ['inbox'], queryFn: api.inbox, refetchInterval: 30_000 });
 
   return (
@@ -37,18 +34,24 @@ export function InboxPage() {
         description="Documents waiting to be processed. Upload here, then ask Claude to file them."
       />
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-start">
-        <UploadCard />
-        <Card className="overflow-hidden lg:order-1">
-          <CardHeader>
-            <CardTitle>Unprocessed documents</CardTitle>
-            <CardDescription>
-              {inbox.data
-                ? `${formatInt(inbox.data.items.length)} waiting`
-                : 'Uploaded documents that have not been filed or sent to review.'}
-            </CardDescription>
-          </CardHeader>
-          <InboxList query={inbox} />
-        </Card>
+        <div className="grid gap-6 lg:order-2">
+          <UploadCard />
+          {isPartner && <BatchIntakeCard />}
+        </div>
+        <div className="grid min-w-0 gap-6 lg:order-1">
+          <Card className="overflow-hidden">
+            <CardHeader>
+              <CardTitle>Unprocessed documents</CardTitle>
+              <CardDescription>
+                {inbox.data
+                  ? `${formatInt(inbox.data.items.length)} waiting`
+                  : 'Uploaded documents that have not been filed or sent to review.'}
+              </CardDescription>
+            </CardHeader>
+            <InboxList query={inbox} />
+          </Card>
+          {isPartner && <DeadLetterCard />}
+        </div>
       </div>
     </>
   );
@@ -182,7 +185,7 @@ function UploadCard() {
   };
 
   return (
-    <Card className="lg:order-2">
+    <Card>
       <CardHeader>
         <CardTitle>Upload</CardTitle>
         <CardDescription>PDF or plain text. Use the fictional demo documents only.</CardDescription>

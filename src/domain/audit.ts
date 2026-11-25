@@ -1,4 +1,4 @@
-import type { Db } from '../db/index.js';
+import { firmOf, type Db } from '../db/index.js';
 
 export type AuditOutcome = 'ok' | 'denied' | 'error';
 
@@ -29,8 +29,8 @@ export function maskSensitive(value: unknown): unknown {
 
 export async function recordAudit(db: Db, entry: AuditEntry): Promise<void> {
   await db.query(
-    `insert into audit_log (staff_id, tool, input, outcome, detail, duration_ms)
-     values ($1, $2, $3::jsonb, $4, $5, $6)`,
+    `insert into audit_log (firm_id, staff_id, tool, input, outcome, detail, duration_ms)
+     values ($7, $1, $2, $3::jsonb, $4, $5, $6)`,
     [
       entry.staffId,
       entry.tool,
@@ -38,6 +38,7 @@ export async function recordAudit(db: Db, entry: AuditEntry): Promise<void> {
       entry.outcome,
       entry.detail ?? null,
       Math.round(entry.durationMs),
+      firmOf(db),
     ],
   );
 }

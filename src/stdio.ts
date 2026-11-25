@@ -1,5 +1,5 @@
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { openDatabase } from './bootstrap.js';
+import { openDatabase, rebuildPassages } from './bootstrap.js';
 import { loadConfig, loadDotEnv } from './config.js';
 import { findActorByEmail } from './domain/staff.js';
 import { createMcpServer } from './mcp/server.js';
@@ -22,8 +22,9 @@ if (!actor) {
   process.exit(1);
 }
 
-const server = createMcpServer({ db, actor, services });
+const server = createMcpServer({ db: db.forFirm(actor.firmId), actor, services });
 await server.connect(new StdioServerTransport());
+void rebuildPassages(db, log, services).catch(() => log('Could not check search passages.'));
 log(
   `Ready as ${actor.name} (${actor.role}); extractor ${services.extractor.name}, embeddings ${services.embedder.model}.`,
 );

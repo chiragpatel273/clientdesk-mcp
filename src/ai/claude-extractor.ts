@@ -8,6 +8,7 @@ import {
   type Output,
 } from './extraction-prompt.js';
 import { weakestConfidence, type ExtractionInput, type Extractor } from './extraction.js';
+import { timedCall } from './usage.js';
 
 /** Small, cheap model first; the larger one only when the first is unsure. */
 export const SMALL_MODEL = 'claude-haiku-5-5';
@@ -35,15 +36,25 @@ export function claudeExtractor(options: { apiKey?: string; client?: Anthropic }
 
   async function run(model: string, input: ExtractionInput): Promise<Output> {
     const large = model === LARGE_MODEL;
-    const response = await client.beta.messages.parse({
-      model,
-      max_tokens: 16000,
-      system: [{ type: 'text', text: EXTRACTION_SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }],
-      messages: [{ role: 'user', content: userContent(input) }],
-      output_config: { format: betaZodOutputFormat(OutputSchema), effort: large ? 'medium' : 'low' },
-      // On a safety decline the API re-runs the request on a fallback model instead of failing.
-      ...(large ? { betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' as const } : {}),
-    });
+    const response = await timedCall(
+      { operation: 'extract', provider: 'anthropic', model, escalated: large },
+      () =>
+        client.beta.messages.parse({
+          model,
+          max_tokens: 16000,
+          system: [{ type: 'text', text: EXTRACTION_SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }],
+          messages: [{ role: 'user', content: userContent(input) }],
+          output_config: { format: betaZodOutputFormat(OutputSchema), effort: large ? 'medium' : 'low' },
+          // On a safety decline the API re-runs the request on a fallback model instead of failing.
+          ...(large ? { betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' as const } : {}),
+        }),
+      // Cache writes and reads are counted as input at the full rate: a slight overestimate (see prices.ts).
+      (r) => ({
+        inputTokens:
+          r.usage.input_tokens + (r.usage.cache_creation_input_tokens ?? 0) + (r.usage.cache_read_input_tokens ?? 0),
+        outputTokens: r.usage.output_tokens,
+      }),
+    );
     if (response.stop_reason === 'refusal') throw new Error(`${model} declined to extract this document`);
     if (response.stop_reason === 'max_tokens') throw new Error(`${model} ran out of tokens while extracting`);
     if (!response.parsed_output) throw new Error(`${model} returned output that did not match the schema`);

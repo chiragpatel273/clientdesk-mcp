@@ -6,6 +6,7 @@ import { Button } from '../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
 import { Skeleton } from '../components/ui/skeleton';
 import { useSwitchUser } from '../lib/session';
+import { TryDemoButton, useAuthOptions } from '../components/demo';
 
 const LOGIN_URL = '/auth/login?returnTo=/dashboard/';
 
@@ -16,6 +17,7 @@ const LOGIN_URL = '/auth/login?returnTo=/dashboard/';
 export function SignInPage() {
   const staff = useQuery({ queryKey: ['staff'], queryFn: api.staff, retry: false });
   const switchUser = useSwitchUser();
+  const options = useAuthOptions();
 
   return (
     <div className="flex min-h-dvh items-center justify-center bg-background px-4 py-12">
@@ -23,7 +25,7 @@ export function SignInPage() {
         <CardHeader className="items-center pt-8 text-center">
           <Logo />
           <CardTitle className="mt-3 text-lg">Sign in to ClientDesk</CardTitle>
-          <CardDescription>Northbridge Advisory staff dashboard</CardDescription>
+          <CardDescription>Staff dashboard for accounting firms</CardDescription>
         </CardHeader>
         <CardContent className="pb-8">
           {staff.isPending ? (
@@ -57,6 +59,14 @@ export function SignInPage() {
                 <ShieldCheck className="mt-px size-3.5 shrink-0" />
                 What you can see is decided by your role and client assignments, and every action is logged.
               </p>
+              {options.data?.demoLogin && (
+                <>
+                  <div className="flex items-center gap-3 text-xs text-muted-foreground" aria-hidden>
+                    <span className="h-px flex-1 bg-border" /> or <span className="h-px flex-1 bg-border" />
+                  </div>
+                  <TryDemoButton />
+                </>
+              )}
             </div>
           )}
         </CardContent>

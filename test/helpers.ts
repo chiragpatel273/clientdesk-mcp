@@ -4,8 +4,8 @@ import { localEmbedder } from '../src/ai/embeddings.js';
 import { rulesExtractor } from '../src/ai/rules-extractor.js';
 import { createDb, type Db } from '../src/db/index.js';
 import { migrate } from '../src/db/migrate.js';
-import { seedDemoDocuments } from '../src/demo/documents.js';
-import { seedDemoFirm } from '../src/demo/seed.js';
+import { seedDemoDocuments, seedSecondFirmDocuments } from '../src/demo/documents.js';
+import { ensureFirms, seedDemoFirm, seedSecondFirm } from '../src/demo/seed.js';
 import { createLinkSigner } from '../src/documents/links.js';
 import { findActorByEmail } from '../src/domain/staff.js';
 import { createMcpServer } from '../src/mcp/server.js';
@@ -26,18 +26,30 @@ export function testServices(overrides: Partial<AppServices> = {}): AppServices 
   };
 }
 
-/** A fresh in-memory Postgres with the schema and demo firm loaded (no documents). */
+export const NB = 'firm_northbridge';
+export const HL = 'firm_harbourline';
+
+/** Northbridge's scoped handle: what every request by a Northbridge staff member gets. */
+export const nb = (db: Db): Db => db.forFirm(NB);
+
+/**
+ * A fresh in-memory Postgres with the schema and both demo firms loaded (no documents). Returns the unscoped
+ * (owner) handle: raw SQL in tests sees every firm; domain functions need `nb(db)` or `db.forFirm(...)`.
+ */
 export async function demoDb(): Promise<Db> {
   const db = await createDb('pglite://memory');
   await migrate(db);
-  await seedDemoFirm(db);
+  await ensureFirms(db);
+  await seedDemoFirm(db.forFirm(NB));
+  await seedSecondFirm(db.forFirm(HL));
   return db;
 }
 
-/** The demo firm plus its documents (filed library and the three inbox documents). */
+/** Both firms plus their documents (Northbridge: filed library and three inbox documents; Harbourline: two). */
 export async function demoDbWithDocuments(services: AppServices): Promise<Db> {
   const db = await demoDb();
-  await seedDemoDocuments(db, services);
+  await seedDemoDocuments(db.forFirm(NB), services);
+  await seedSecondFirmDocuments(db.forFirm(HL), services);
   return db;
 }
 
@@ -45,7 +57,7 @@ export async function demoDbWithDocuments(services: AppServices): Promise<Db> {
 export async function connectAs(db: Db, email: string, services: AppServices = testServices()): Promise<Client> {
   const actor = await findActorByEmail(db, email);
   if (!actor) throw new Error(`No staff member ${email}`);
-  const server = createMcpServer({ db, actor, services });
+  const server = createMcpServer({ db: db.forFirm(actor.firmId), actor, services });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 'test', version: '0.0.0' });
   await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
@@ -72,3 +84,5 @@ export async function lastAudit(db: Db) {
 export const MAYA = 'maya@northbridge.example'; // partner
 export const TOM = 'tom@northbridge.example'; // assistant
 export const ANA = 'ana@northbridge.example'; // assistant
+export const LENA = 'lena@harbourline.example'; // Harbourline partner
+export const SAM = 'sam@harbourline.example'; // Harbourline assistant

@@ -8,15 +8,17 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import express, { type Express, type NextFunction, type Request, type RequestHandler, type Response } from 'express';
+import { errorCategory, usageScope } from './ai/usage.js';
 import type { OAuthSetup } from './auth/oauth.js';
 import type { Config } from './config.js';
 import type { Db } from './db/index.js';
 import { projectRoot } from './db/migrate.js';
+import { noteCrossFirm } from './domain/access.js';
 import { recordAudit } from './domain/audit.js';
 import { getDocument } from './domain/documents.js';
-import { findActorByEmail } from './domain/staff.js';
+import { findActorByEmail, findActorById } from './domain/staff.js';
 import type { Actor } from './domain/types.js';
-import { ensureMatch } from './domain/intake.js';
+import { ensureMatch, isJudged } from './domain/intake.js';
 import { canSeeDocument } from './mcp/document-access.js';
 import { createMcpServer } from './mcp/server.js';
 import type { AppServices } from './services.js';
@@ -86,6 +88,8 @@ export interface HttpDeps {
   config: Config;
   services: AppServices;
   oauth?: OAuthSetup;
+  /** Called when a background job is queued, so an in-process worker looks at once. */
+  onJobQueued?: () => void;
   /** Where `dashboard/dist` and `eval/report.json` live. Defaults to the repo root. */
   projectRoot?: string;
 }
@@ -97,6 +101,8 @@ export function createHttpApp(deps: HttpDeps): Express {
 
   const app = createMcpExpressApp(config.allowedHosts ? { allowedHosts: config.allowedHosts } : {});
   app.disable('x-powered-by');
+  // Behind Render's proxy, req.ip must come from X-Forwarded-For (only the hops we trust), for the demo rate limit.
+  if (config.trustProxy > 0) app.set('trust proxy', config.trustProxy);
   app.use((_req, res, next) => {
     // Signed document links must never leak through the Referer header; nothing here should be framed.
     res.set({ 'referrer-policy': 'no-referrer', 'x-frame-options': 'DENY', 'x-content-type-options': 'nosniff' });
@@ -135,7 +141,8 @@ export function createHttpApp(deps: HttpDeps): Express {
       jsonRpcError(res, result.status, -32001, result.message);
       return;
     }
-    const server = createMcpServer({ db, actor: result.actor, services });
+    // Every query this request makes runs scoped to the caller's firm (domain filter + row-level security).
+    const server = createMcpServer({ db: db.forFirm(result.actor.firmId), actor: result.actor, services });
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     res.on('close', () => {
       void transport.close();
@@ -145,7 +152,7 @@ export function createHttpApp(deps: HttpDeps): Express {
       await server.connect(transport);
       await transport.handleRequest(req, res, req.body);
     } catch (error) {
-      console.error('MCP request failed', error);
+      console.error('MCP request failed:', errorCategory(error));
       if (!res.headersSent) jsonRpcError(res, 500, -32603, 'Internal server error');
     }
   });
@@ -164,15 +171,43 @@ export function createHttpApp(deps: HttpDeps): Express {
       res.status(403).type('text/plain').send('This link is invalid or has expired. Ask Claude for a fresh one.');
       return;
     }
-    const [staff] = await db.query<{ email: string }>('select email from staff where id = $1', [staffId]);
-    const actor = staff ? await findActorByEmail(db, staff.email) : null;
-    const doc = await getDocument(db, documentId);
-    if (!actor || !doc) {
+    const actor = await findActorById(db, staffId);
+    if (!actor) {
       res.status(404).type('text/plain').send('Document not found.');
       return;
     }
-    const access = await canSeeDocument({ db, actor }, doc, await ensureMatch(db, services, doc));
-    await recordAudit(db, {
+    const firmDb = db.forFirm(actor.firmId);
+    const doc = await getDocument(firmDb, documentId);
+    if (!doc) {
+      await noteCrossFirm(firmDb, actor, 'download_document', 'document', documentId);
+      await recordAudit(firmDb, {
+        staffId: actor.staffId,
+        tool: 'download_document',
+        input: { documentId },
+        outcome: 'denied',
+        detail: 'unknown id',
+        durationMs: 0,
+      });
+      res.status(404).type('text/plain').send('Document not found.');
+      return;
+    }
+    const judged = await usageScope({ db: firmDb, staffId: actor.staffId, source: 'mcp', documentId }, () =>
+      ensureMatch(firmDb, services, doc, actor),
+    ).catch((err: unknown) => err);
+    if (!isJudged(judged)) {
+      await recordAudit(firmDb, {
+        staffId: actor.staffId,
+        tool: 'download_document',
+        input: { documentId },
+        outcome: 'error',
+        detail: errorCategory(judged),
+        durationMs: 0,
+      });
+      res.status(503).type('text/plain').send('This document can’t be checked right now. Try again in a few minutes.');
+      return;
+    }
+    const access = await canSeeDocument({ db: firmDb, actor }, judged.doc, judged.match);
+    await recordAudit(firmDb, {
       staffId: actor.staffId,
       tool: 'download_document',
       input: { documentId },
@@ -189,16 +224,27 @@ export function createHttpApp(deps: HttpDeps): Express {
 
   // The staff dashboard: sign-in, JSON API and the built React app.
   mountDashboardAuth(app, { db, config, oauth });
-  app.use('/api', createApiRouter({ db, config, services, projectRoot: root }));
+  app.use('/api', createApiRouter({ db, config, services, projectRoot: root, onJobQueued: deps.onJobQueued }));
   const dist = join(root, 'dashboard', 'dist');
   if (existsSync(join(dist, 'index.html'))) {
-    app.use('/dashboard', express.static(dist, { index: 'index.html', maxAge: '1h' }));
-    app.get(/^\/dashboard(\/.*)?$/, (_req, res) => res.sendFile(join(dist, 'index.html')));
+    // Built files have a hash in their name, so they never change: keep them. The page that names them must be checked every
+    // time, or after a deploy a browser would ask for files that no longer exist (which are a 404, not the page).
+    app.use(
+      '/dashboard/assets',
+      express.static(join(dist, 'assets'), { index: false, immutable: true, maxAge: '365d' }),
+      (_req, res) => void res.status(404).type('text/plain').send('Not found'),
+    );
+    const page = { headers: { 'cache-control': 'no-cache' }, cacheControl: false };
+    app.use(
+      '/dashboard',
+      express.static(dist, { index: false, cacheControl: false, setHeaders: (res) => void res.set(page.headers) }),
+    );
+    app.get(/^\/dashboard(\/.*)?$/, (_req, res) => res.sendFile(join(dist, 'index.html'), page));
     app.get('/', (_req, res) => res.redirect('/dashboard/'));
   }
 
   app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
-    console.error('Request failed', err instanceof Error ? err.message : err);
+    console.error('Request failed:', errorCategory(err));
     if (!res.headersSent) res.status(500).json({ error: 'Internal server error' });
   });
 
