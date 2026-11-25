@@ -158,8 +158,11 @@ second look:
 Nothing in the spec was skipped. Not verifiable from here:
 
 - **Deployed 2026-11-25** (PR #9, `main` at `85d3fb0`): the migrations ran on Neon, the site came up, a client lookup and the inbox
-  list through the live connector returned v1's data, and the owner tried the demo. Not tried on the live site yet: search, batch
-  intake and the signed-in dashboard. The rest of this section was written before the deploy.
+  list through the live connector returned v1's data, and the owner
+  tried the demo. Later that day, on the live site: three searches returned the right document first, and one for the second firm's
+  documents returned none of them; a stored file opened and its link was refused for another person or document; all six demo pages loaded in a browser
+  and a change was refused and audited; v1's audit rows were still there. Not tried on the live site: batch intake and review as a
+  signed-in partner, and reading documents with Groq on v2 (the whole journey was run on a local copy, with the offline reader). The rest of this section was written before the deploy.
 - **Migrations 007 and 008 on Neon.** They run on PGlite and on a real Postgres 18 (2026-11-24, below), as a non-superuser owner
   that may create roles. They have not run on Neon, and whether Neon's owner role may create roles is not confirmed here. If it may
   not, 007 fails ("permission denied to create role") and changes nothing; 003 to 006 stay applied.
@@ -300,7 +303,7 @@ ANTHROPIC_API_KEY= GROQ_API_KEY= VOYAGE_API_KEY= npx tsx src/main.ts     # http:
 
 ## Resume bullets (v2, real numbers)
 
-v2 is deployed and its CI (check, eval, e2e) has run; search and batch intake have not been tried on the live site yet.
+v2 is deployed and its CI (check, eval, e2e) has run; batch intake and signed-in review have not been tried on the live site yet.
 
 - Re-architected a live Claude/MCP document-intake app (TypeScript, Postgres) for multi-tenancy: `firm_id`
   isolation enforced twice, in the domain layer and with Postgres row-level security plus same-firm foreign keys,

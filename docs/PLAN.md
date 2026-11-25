@@ -288,7 +288,8 @@ Nothing was blocked in the build. These need the owner (details and commands in 
   the v1 code can't write to the upgraded database, so problems are fixed forward.
 - **Render:** `DEMO_LOGIN` is on. `TRUST_PROXY=1` (in `render.yaml`) still to be confirmed there by the owner: without it all
   visitors share one demo rate limit.
-- **Not yet tried on the live site:** search, batch intake and the signed-in dashboard on v2.
+- **Not yet tried on the live site (v2):** batch intake, review as a signed-in partner, reading documents with Groq. Search, files,
+  link checks and the demo pages were checked there on 2026-11-25.
 - **Measured runs with keys** (none were made): Groq eval (free), Claude eval (about $0.05–0.40), Voyage.
 - **Re-record the demo video** for Try the demo, batch intake, the Usage page and firm isolation.
 
