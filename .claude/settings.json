@@ -11,6 +11,9 @@
       "Bash(git status)",
       "Bash(git diff:*)"
     ],
+    "ask": [
+      "Bash(git push:*)"
+    ],
     "deny": [
       "Read(./.env)",
       "Read(./.env.local)",
@@ -20,19 +23,32 @@
       "Read(./.env.staging)",
       "Read(./.env.production)",
       "Read(./.env.prod)",
-      "Bash(git push:*)"
+      "Bash(git push origin main:*)",
+      "Bash(git push -u origin main:*)",
+      "Bash(git push --force:*)",
+      "Bash(git push -f:*)"
     ]
   },
   "hooks": {
     "PostToolUse": [
       {
         "matcher": "Edit|MultiEdit|Write",
-        "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/format-file.mjs\"" }]
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/format-file.mjs\""
+          }
+        ]
       }
     ],
     "Stop": [
       {
-        "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/verify.mjs\"" }]
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/verify.mjs\""
+          }
+        ]
       }
     ]
   }

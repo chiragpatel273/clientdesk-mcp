@@ -284,16 +284,18 @@ Build order: 1 → 2 → 3 → 5 → 6 → 4. Every phase must pass `npm run che
 
 Nothing was blocked in the build. These need the owner (details and commands in `docs/V2-REPORT.md`):
 
-- **Neon: migrations 007 and 008** (007 creates role `clientdesk_app`). Run on PGlite and on a local Postgres 18 as a
-  non-superuser; not on Neon. After 007 the v1 code can't write, so a rollback needs a database restore.
-- **Render:** `DEMO_LOGIN=true` and `TRUST_PROXY=1` (in `render.yaml`; add by hand if the service isn't synced from
-  the blueprint).
+- **Neon: migrations 007 and 008** ran on deploy (2026-11-25; the server starts only once they have). No backup branch was made and
+  the v1 code can't write to the upgraded database, so problems are fixed forward.
+- **Render:** `DEMO_LOGIN` is on. `TRUST_PROXY=1` (in `render.yaml`) still to be confirmed there by the owner: without it all
+  visitors share one demo rate limit.
+- **Not yet tried on the live site (v2):** batch intake, review as a signed-in partner, reading documents with Groq. Search, files,
+  link checks and the demo pages were checked there on 2026-11-25.
 - **Measured runs with keys** (none were made): Groq eval (free), Claude eval (about $0.05–0.40), Voyage.
 - **Re-record the demo video** for Try the demo, batch intake, the Usage page and firm isolation.
 
 ## Status
 
-- **v2 (2026-11-19, branch `v2`, not merged or deployed):** all six phases built offline and committed one by one:
+- **v2 (built 2026-11-19, merged as PR #9 and deployed 2026-11-25):** all six phases built offline and committed one by one:
   1 Try the demo, 2 search (citation 96.7% → 100% offline, same questions), 3 batch intake on a Postgres job queue, 5 Playwright
   E2E, 6 LLM usage and cost, 4 multiple firms with RLS. 225 vitest tests + 15 Playwright tests, offline eval,
   both builds and the Docker image pass. Report: `docs/V2-REPORT.md`.
